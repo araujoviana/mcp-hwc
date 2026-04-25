@@ -1,0 +1,20 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "huawei_cloud": {
+      "type": "local",
+      "command": [
+        "uv",
+        "--directory",
+        "/home/panguzinho/code/mcp-hwc",
+        "run",
+        "mcp-hwc"
+      ],
+      "enabled": true,
+      "timeout": 10000,
+      "environment": {
+        "MCP_HWC_ENV_FILE": "/home/panguzinho/code/mcp-hwc/.env"
+      }
+    }
+  }
+}

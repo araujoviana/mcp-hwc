@@ -1,0 +1,34 @@
+[project]
+name = "mcp-hwc"
+version = "0.1.0"
+description = "MCP server for managing Huawei Cloud services"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "esdk-obs-python",
+    "huaweicloudsdkcore>=3.1.192",
+    "huaweicloudsdkecs>=3.1.192",
+    "huaweicloudsdkims>=3.1.192",
+    "huaweicloudsdkrds>=3.1.192",
+    "huaweicloudsdkvpc>=3.1.192",
+    "mcp[cli]",
+    "python-dotenv",
+]
+
+[project.scripts]
+mcp-hwc = "mcp_hwc.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["mcp_hwc"]
+
+[dependency-groups]
+dev = [
+    "pytest",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
