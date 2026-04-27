@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from pathlib import Path
 
 import pytest
 
@@ -273,6 +274,85 @@ def test_put_text_object_returns_sdk_metadata() -> None:
         "etag": "etag-2",
         "version_id": "v1",
         "object_url": "https://example/object",
+    }
+
+
+def test_upload_file_uses_local_path(tmp_path: Path) -> None:
+    regional_server = build_obs_server("ap-southeast-1")
+    source_file = tmp_path / "payload.bin"
+    source_file.write_bytes(b"demo-bytes")
+    factory = FakeClientFactory(
+        {
+            regional_server: SimpleNamespace(
+                putFile=lambda bucketName, objectKey, file_path: make_response(
+                    200,
+                    SimpleNamespace(
+                        etag="etag-3",
+                        versionId="v2",
+                        objectUrl="https://example/uploaded",
+                    ),
+                )
+            )
+        }
+    )
+
+    service = ObsService(make_config(), client_factory=factory)
+
+    result = service.upload_file(
+        "demo-bucket",
+        str(source_file),
+        object_key="artifacts/payload.bin",
+        region="ap-southeast-1",
+    )
+
+    assert result == {
+        "bucket": "demo-bucket",
+        "key": "artifacts/payload.bin",
+        "region": "ap-southeast-1",
+        "endpoint": regional_server,
+        "source_path": str(source_file.resolve()),
+        "size_bytes": 10,
+        "etag": "etag-3",
+        "version_id": "v2",
+        "object_url": "https://example/uploaded",
+    }
+
+
+def test_download_object_writes_local_file(tmp_path: Path) -> None:
+    regional_server = build_obs_server("ap-southeast-1")
+
+    def fake_get_object(bucketName, objectKey, **kwargs):
+        Path(kwargs["downloadPath"]).write_bytes(b"downloaded")
+        return make_response(200, SimpleNamespace(url=kwargs["downloadPath"]))
+
+    factory = FakeClientFactory(
+        {
+            regional_server: SimpleNamespace(
+                getObject=fake_get_object,
+            )
+        }
+    )
+
+    service = ObsService(make_config(), client_factory=factory)
+    destination = tmp_path / "nested" / "file.bin"
+
+    result = service.download_object(
+        "demo-bucket",
+        "artifacts/file.bin",
+        str(destination),
+        region="ap-southeast-1",
+    )
+
+    assert destination.read_bytes() == b"downloaded"
+    assert result == {
+        "bucket": "demo-bucket",
+        "key": "artifacts/file.bin",
+        "region": "ap-southeast-1",
+        "endpoint": regional_server,
+        "destination_path": str(destination.resolve()),
+        "size_bytes": 10,
+        "etag": None,
+        "downloaded": True,
     }
 
 

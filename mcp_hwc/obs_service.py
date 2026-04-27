@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, Protocol
 
 from obs import ObsClient
@@ -37,6 +38,11 @@ class ObsClientProtocol(Protocol):
 
     def putContent(
         self, bucketName: str, objectKey: str, content: str, **kwargs: Any
+    ) -> Any:  # noqa: N802
+        ...
+
+    def putFile(
+        self, bucketName: str, objectKey: str, file_path: str, **kwargs: Any
     ) -> Any:  # noqa: N802
         ...
 
@@ -320,6 +326,68 @@ class ObsService:
             "object_url": _get_attr(response.body, "objectUrl", "object_url"),
         }
 
+    def upload_file(
+        self,
+        bucket_name: str,
+        source_path: str,
+        object_key: str | None = None,
+        region: str | None = None,
+    ) -> dict[str, object]:
+        resolved_region = self._resolve_bucket_region(bucket_name, region)
+        endpoint = build_obs_server(resolved_region)
+        resolved_source_path = _resolve_local_source_path(source_path)
+        resolved_object_key = object_key.strip() if object_key else resolved_source_path.name
+        response = self._require_success(
+            self._client_for_region(resolved_region).putFile(
+                bucket_name,
+                resolved_object_key,
+                str(resolved_source_path),
+            ),
+            f"upload file '{resolved_source_path}' to bucket '{bucket_name}'",
+        )
+
+        return {
+            "bucket": bucket_name,
+            "key": resolved_object_key,
+            "region": resolved_region,
+            "endpoint": endpoint,
+            "source_path": str(resolved_source_path),
+            "size_bytes": resolved_source_path.stat().st_size,
+            "etag": _get_attr(response.body, "etag"),
+            "version_id": _get_attr(response.body, "versionId", "version_id"),
+            "object_url": _get_attr(response.body, "objectUrl", "object_url"),
+        }
+
+    def download_object(
+        self,
+        bucket_name: str,
+        object_key: str,
+        destination_path: str,
+        region: str | None = None,
+    ) -> dict[str, object]:
+        resolved_region = self._resolve_bucket_region(bucket_name, region)
+        endpoint = build_obs_server(resolved_region)
+        resolved_destination_path = _resolve_local_destination_path(destination_path)
+        response = self._require_success(
+            self._client_for_region(resolved_region).getObject(
+                bucket_name,
+                object_key,
+                downloadPath=str(resolved_destination_path),
+            ),
+            f"download object '{object_key}' from bucket '{bucket_name}'",
+        )
+
+        return {
+            "bucket": bucket_name,
+            "key": object_key,
+            "region": resolved_region,
+            "endpoint": endpoint,
+            "destination_path": str(resolved_destination_path),
+            "size_bytes": resolved_destination_path.stat().st_size,
+            "etag": _get_attr(response.header, "etag") if hasattr(response, "header") else None,
+            "downloaded": True,
+        }
+
     def delete_bucket(
         self,
         bucket_name: str,
@@ -467,3 +535,22 @@ def _get_attr(obj: Any, *names: str, default: Any = None) -> Any:
         if hasattr(obj, name):
             return getattr(obj, name)
     return default
+
+
+def _resolve_local_source_path(source_path: str) -> Path:
+    resolved = Path(source_path).expanduser()
+    if not resolved.is_absolute():
+        resolved = Path.cwd() / resolved
+    resolved = resolved.resolve()
+    if not resolved.exists() or not resolved.is_file():
+        raise ValueError(f"Source file does not exist: {resolved}")
+    return resolved
+
+
+def _resolve_local_destination_path(destination_path: str) -> Path:
+    resolved = Path(destination_path).expanduser()
+    if not resolved.is_absolute():
+        resolved = Path.cwd() / resolved
+    resolved = resolved.resolve()
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    return resolved
