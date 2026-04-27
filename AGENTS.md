@@ -3,9 +3,28 @@
 - Required environment variables: `HWC_AK` and `HWC_SK`.
 - Optional credential environment variable: `HWC_SECURITY_TOKEN` for temporary credentials.
 - Do not require users to set `HWC_REGION`, `HWC_PROJECT_ID`, `HWC_ECS_*`, `HWC_RDS_*`, or `HWC_OBS_*` in normal agent flows.
+- Assume the user wants the least-input path. Prefer zero-question or one-question provisioning flows, and only ask when the missing choice materially changes region, cost, security, deletion risk, or required secrets.
 - Region should come from user input, the tool call arguments, the request payload when available, or endpoint inference.
 - Common human region aliases such as `santiago` and `sao paulo` should be accepted and normalized to Huawei region codes automatically.
 - `project_id` should be resolved automatically by the Huawei SDK through IAM when the region is known. If automatic resolution is ambiguous, prefer an explicit `project_id` tool argument instead of asking for an env var.
+- For IAM and other global-account flows, prefer automatic region-based domain discovery first; only fall back to an explicit `domain_id` tool argument when needed.
+- When the user gives a vague provisioning request, prefer `huaweicloud_resolve_defaults` first so the agent can anchor on a strong least-input profile before falling back to raw schema discovery.
 - For ECS provisioning flows, use `vpc_*` tools to discover or create VPC, subnet, route, and security-group prerequisites, and use `ims_*` tools to discover the image to boot from.
+- After provisioning SSH-capable compute such as ECS instances, use `ssh_execute`, `ssh_upload_file`, and `ssh_download_file` to install packages, edit config files, move artifacts, and validate services.
+- When a workflow needs a container image pushed to SWR, prefer `swr_upload_image` over telling the user to log in and push manually.
+- When a workflow needs FunctionGraph code deployed from local files, prefer `functiongraph_deploy_code` over asking the user to zip or base64-encode source by hand.
+- When a workflow needs logs from LTS, prefer `lts_query_logs` to resolve log groups or streams by name and filter log output in one step.
 - For RDS provisioning flows, use `vpc_*` tools for networking prerequisites before calling `rds_*` operations.
-- OBS bucket and object operations should prefer bucket-region discovery or explicit `region` arguments instead of extra env configuration.
+- For CCE and MRS provisioning flows, create or reuse the whole dependency chain automatically: VPC, subnet, security groups, EIP/ELB, storage, node pools, and related add-ons unless the user explicitly wants manual control.
+- When the user asks for cluster-internal operations on CCE, use `cce_get_kubeconfig` and then the `k8s_*` or `helm_*` tools instead of pretending the Huawei SDK alone can replace kubectl or helm.
+- The Kubernetes and Helm tools support `execution_backend="auto"`, which prefers local binaries and otherwise falls back to a containerized runner on the MCP host.
+- For database provisioning flows such as RDS, DWS, CloudTable, GaussDB, TaurusDB, GeminiDB-style `gaussdb_nosql`, DDS, DCS, DDM, DAS, and DMS or DRS families, create networking, backups, and optional KMS or CBR resources automatically when they are implied by the request.
+- Use IAM tools to manage policies, users, groups, agencies, roles, access keys, and related identity resources instead of telling the user to handle IAM manually.
+- Use the networking service tools for full network setup when needed: `vpc_*`, `nat_*`, `dns_*`, `er_*`, `vpn_*`, `dc_*`, `geip_*`, `ga_*`, `vpcep_*`, `cc_*`, `esw_*`, `apig_*`, `cdn_*`, `elb_*`, and `eip_*`.
+- Container-platform coverage includes `cce_*`, `cae_*`, `functiongraph_*`, `asm_*`, `swr_*`, and `ucs_*`.
+- Prefer `huaweicloud_list_services` and the generic `huaweicloud_*` tools when you need service aliases or `api_version` selection. Use `huaweicloud_summarize_capabilities` first when the user asks what a service can do at a high level. Service-specific `*_list_operations`, `*_describe_operation`, and `*_call_operation` tools are available for the supported families.
+- `modelarts_studio_*` and `maas_*` share the MaStudio SDK surface, `sfs_*` is backed by the SFS Turbo SDK surface, `taurusdb_*` is backed by the GaussDB SDK surface, `geminidb` resolves to `gaussdb_nosql`, `vbs` resolves to `cbr`, and `dms_*` complements `kafka_*`, `rabbitmq_*`, and `rocketmq_*`.
+- CodeArts is split across `codearts_artifact_*`, `codearts_build_*`, `codearts_check_*`, `codearts_deploy_*`, `codearts_pipeline_*`, `codearts_repo_*`, and `codehub_*` because Huawei publishes separate SDK families.
+- Observability and governance coverage now includes `apm_*`, `aom_*`, `lts_*`, `ces_*`, `cts_*`, `config_*`, and `organizations_*`.
+- Security coverage now includes `cfw_*`, `waf_*`, `aad_*`, `antiddos_*`, `cgs_*`, `cbh_*`, and `secmaster_*`.
+- OBS bucket and object operations should prefer bucket-region discovery or explicit `region` arguments instead of extra env configuration, and use `obs_upload_file` / `obs_download_object` when the user needs real file transfer instead of text payloads.

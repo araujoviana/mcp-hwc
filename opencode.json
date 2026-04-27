@@ -6,14 +6,14 @@
       "command": [
         "uv",
         "--directory",
-        "/home/panguzinho/code/mcp-hwc",
+        "/mnt/storage/Projetos/python-projs/mcp-hwc",
         "run",
         "mcp-hwc"
       ],
       "enabled": true,
       "timeout": 10000,
       "environment": {
-        "MCP_HWC_ENV_FILE": "/home/panguzinho/code/mcp-hwc/.env"
+        "MCP_HWC_ENV_FILE": "/mnt/storage/Projetos/python-projs/mcp-hwc/.env"
       }
     }
   }

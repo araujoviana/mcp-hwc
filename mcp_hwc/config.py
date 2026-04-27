@@ -31,6 +31,7 @@ class CloudApiConfig:
     access_key_id: str
     secret_access_key: str
     project_id: str | None = None
+    domain_id: str | None = None
     region: str | None = None
     security_token: str | None = None
     endpoint: str | None = None
@@ -43,6 +44,7 @@ class CloudApiConfig:
         *,
         region: str | None = None,
         project_id: str | None = None,
+        domain_id: str | None = None,
         endpoint: str | None = None,
     ) -> "CloudApiConfig":
         env_values = _load_env_values(env_file)
@@ -84,6 +86,14 @@ class CloudApiConfig:
                 "HWC_PROJECT_ID",
             )
 
+        resolved_domain_id = domain_id
+        if resolved_domain_id is None:
+            resolved_domain_id = _first_present(
+                env_values,
+                f"HWC_{service_key}_DOMAIN_ID",
+                "HWC_DOMAIN_ID",
+            )
+
         resolved_endpoint = endpoint
         if resolved_endpoint is None:
             resolved_endpoint = _first_present(
@@ -114,7 +124,8 @@ class CloudApiConfig:
         return cls(
             access_key_id=access_key_id,
             secret_access_key=secret_access_key,
-            project_id=_normalize_project_id(resolved_project_id),
+            project_id=_normalize_identifier(resolved_project_id),
+            domain_id=_normalize_identifier(resolved_domain_id),
             region=normalized_region,
             security_token=security_token,
             endpoint=normalized_endpoint,
@@ -217,10 +228,10 @@ def _first_present(env_values: dict[str, str], *names: str) -> str | None:
     return None
 
 
-def _normalize_project_id(project_id: str | None) -> str | None:
-    if project_id is None:
+def _normalize_identifier(identifier: str | None) -> str | None:
+    if identifier is None:
         return None
-    value = project_id.strip()
+    value = identifier.strip()
     return value or None
 
 

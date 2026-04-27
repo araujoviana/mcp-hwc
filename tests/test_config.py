@@ -17,6 +17,7 @@ def isolate_config_environment(
         "HWC_SK",
         "HWC_REGION",
         "HWC_PROJECT_ID",
+        "HWC_DOMAIN_ID",
         "HWC_OBS_REGION",
         "HWC_OBS_SERVER",
         "HWC_OBS_ACCESS_KEY_ID",
@@ -28,6 +29,7 @@ def isolate_config_environment(
         "HWC_RDS_REGION",
         "HWC_RDS_PROJECT_ID",
         "HWC_RDS_ENDPOINT",
+        "HWC_IAM_DOMAIN_ID",
         "HWC_SECURITY_TOKEN",
         "AccessKeyID",
         "SecretAccessKey",
@@ -136,6 +138,7 @@ def test_cloud_api_config_reads_shared_region_and_project(
     assert config.secret_access_key == "test-sk"
     assert config.region == "ap-southeast-1"
     assert config.project_id == "project-123"
+    assert config.domain_id is None
     assert config.endpoint is None
 
 
@@ -182,6 +185,20 @@ def test_cloud_api_config_prefers_service_specific_overrides(
     assert config.region == "cn-north-4"
     assert config.project_id == "project-rds"
     assert config.endpoint == "https://rds.cn-north-4.myhuaweicloud.com"
+
+
+def test_cloud_api_config_reads_domain_id_for_global_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HWC_AK", "test-ak")
+    monkeypatch.setenv("HWC_SK", "test-sk")
+    monkeypatch.setenv("HWC_DOMAIN_ID", "domain-global")
+    monkeypatch.setenv("HWC_IAM_DOMAIN_ID", "domain-iam")
+
+    config = CloudApiConfig.from_env("iam")
+
+    assert config.domain_id == "domain-iam"
+    assert config.project_id is None
 
 
 def test_cloud_api_config_applies_runtime_overrides(
