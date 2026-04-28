@@ -784,6 +784,168 @@ def test_postgres_execute_sql_uses_cli_runner(monkeypatch: pytest.MonkeyPatch) -
     assert execute_call[1]["env"]["PGSSLMODE"] == "require"
 
 
+def test_sfs_create_accessible_share_orchestrates_workflow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str, object]] = []
+
+    class FakeWorkflowService:
+        def __init__(self, service_name: str):
+            self.service_name = service_name
+
+        def call_operation(self, operation: str, parameters=None) -> dict[str, object]:
+            calls.append((self.service_name, operation, parameters))
+            if self.service_name == "vpc":
+                if operation == "list_vpcs":
+                    return {"response": {"vpcs": [{"id": "vpc-1", "name": "vpc-default"}]}}
+                if operation == "list_subnets":
+                    return {"response": {"subnets": [{"id": "subnet-1", "name": "subnet-default"}]}}
+                if operation == "show_subnet":
+                    return {"response": {"subnet": {"id": "subnet-1", "cidr": "192.168.0.0/24"}}}
+                if operation == "create_security_group":
+                    return {"response": {"security_group": {"id": "sg-1"}}}
+                if operation == "create_security_group_rule":
+                    return {"response": {"security_group_rule": {"id": "rule-ssh"}}}
+            if self.service_name == "sfs":
+                if operation == "list_share_types":
+                    return {
+                        "response": {
+                            "share_types": [
+                                {
+                                    "share_type": "standard",
+                                    "available_zones": [
+                                        {"available_zone": "la-south-2a", "status": "active"}
+                                    ],
+                                }
+                            ]
+                        }
+                    }
+                if operation == "create_share":
+                    return {"response": {"id": "share-1"}}
+                if operation == "show_share":
+                    return {
+                        "response": {
+                            "id": "share-1",
+                            "name": "demo-share",
+                            "status": "200",
+                            "export_location": "192.168.0.2:/",
+                            "optional_endpoint": "192.168.0.2",
+                        }
+                    }
+                if operation == "list_perm_rules":
+                    return {
+                        "response": {
+                            "rules": [
+                                {"id": "wild-1", "ip_cidr": "*"},
+                            ]
+                        }
+                    }
+                if operation == "delete_perm_rule":
+                    return {"response": {}}
+                if operation == "create_perm_rule":
+                    return {"response": {"rules": [{"id": "perm-1"}]}}
+            if self.service_name == "ims":
+                if operation == "list_images":
+                    return {
+                        "response": {
+                            "images": [
+                                {
+                                    "id": "image-1",
+                                    "status": "active",
+                                    "__platform": "Ubuntu",
+                                    "__os_version": "Ubuntu 24.04 server 64bit",
+                                    "__os_type": "Linux",
+                                }
+                            ]
+                        }
+                    }
+            if self.service_name == "ecs":
+                if operation == "list_flavors":
+                    return {
+                        "response": {
+                            "flavors": [
+                                {
+                                    "id": "ac8.large.2",
+                                    "vcpus": "2",
+                                    "ram": 4096,
+                                    "os_extra_specs": {"cond:operation:az": "la-south-2a(normal),la-south-2b(normal)"},
+                                }
+                            ]
+                        }
+                    }
+                if operation == "create_servers":
+                    return {"response": {"job_id": "job-1"}}
+                if operation == "show_job":
+                    return {"response": {"status": "SUCCESS"}}
+                if operation == "list_servers_details":
+                    return {
+                        "response": {
+                            "servers": [
+                                {
+                                    "id": "server-1",
+                                    "name": "demo-share-client",
+                                    "addresses": {
+                                        "net-1": [
+                                            {"addr": "192.168.0.10", "OS-EXT-IPS:type": "fixed"},
+                                            {"addr": "101.44.13.13", "OS-EXT-IPS:type": "floating"},
+                                        ]
+                                    },
+                                }
+                            ]
+                        }
+                    }
+            raise AssertionError((self.service_name, operation, parameters))
+
+    class FakeWorkflowSshService:
+        def __init__(self):
+            self.commands: list[str] = []
+
+        def execute(self, **kwargs) -> dict[str, object]:
+            command = kwargs["command"]
+            self.commands.append(command)
+            stdout = "ok\n"
+            if command.startswith("cat "):
+                stdout = "sfs proof 2026-04-28T01:06:31Z\n"
+            elif command.startswith("df -h "):
+                stdout = "Filesystem      Size  Used Avail Use% Mounted on\n192.168.0.2:/   500G     0  500G   0% /mnt/sfs-demo\n"
+            elif command.startswith("mount | grep"):
+                stdout = "192.168.0.2:/ on /mnt/sfs-demo type nfs (... )\n"
+            elif command.startswith("ls -la "):
+                stdout = "proof.txt\nproof-2.txt\n"
+            return {
+                "host": kwargs["host"],
+                "port": 22,
+                "username": kwargs["username"],
+                "command": command,
+                "exit_status": 0,
+                "stdout": stdout,
+                "stderr": "",
+            }
+
+    fake_ssh = FakeWorkflowSshService()
+    monkeypatch.setattr(
+        server,
+        "_get_resolved_sdk_service",
+        lambda service_name, *args, **kwargs: FakeWorkflowService(service_name),
+    )
+    monkeypatch.setattr(server, "get_ssh_service", lambda: fake_ssh)
+
+    result = server.sfs_create_accessible_share(
+        region="la-south-2",
+        client_cidr="189.40.74.88/32",
+        share_name="demo-share",
+        access_vm_name="demo-share-client",
+        access_vm_password="Secret123!",
+    )
+
+    assert result["share"]["id"] == "share-1"
+    assert result["share"]["export_location"] == "192.168.0.2:/"
+    assert result["access_vm"]["public_ip"] == "101.44.13.13"
+    assert result["access_vm"]["password"] == "Secret123!"
+    assert result["proof"]["proof_text"] == "sfs proof 2026-04-28T01:06:31Z"
+    assert any("mount -t nfs" in command for command in fake_ssh.commands)
+
+
 def test_obs_upload_file_calls_service(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(server, "get_obs_service", lambda: FakeObsService())
 

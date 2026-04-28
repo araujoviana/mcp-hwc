@@ -213,7 +213,8 @@ class SshService:
 
         client = self._client_factory()
         try:
-            client.load_system_host_keys()
+            if not allow_unknown_host:
+                client.load_system_host_keys()
             policy = (
                 paramiko.AutoAddPolicy() if allow_unknown_host else paramiko.RejectPolicy()
             )

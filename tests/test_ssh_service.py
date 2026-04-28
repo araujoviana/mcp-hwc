@@ -51,8 +51,10 @@ class FakeSshClient:
         self.connected_with: dict[str, object] | None = None
         self.sftp_client = sftp_client
         self.closed = False
+        self.loaded_system_host_keys = False
 
     def load_system_host_keys(self) -> None:
+        self.loaded_system_host_keys = True
         return None
 
     def set_missing_host_key_policy(self, policy) -> None:
@@ -90,6 +92,7 @@ def test_execute_returns_stdout_and_exit_status() -> None:
     assert result["stdout"] == "nginx installed\n"
     assert result["stderr"] == ""
     assert fake_client.connected_with["hostname"] == "10.0.0.10"
+    assert fake_client.loaded_system_host_keys is False
 
 
 def test_upload_file_creates_remote_parent_directories(tmp_path: Path) -> None:
@@ -130,3 +133,18 @@ def test_download_file_writes_local_output(tmp_path: Path) -> None:
     assert target.read_bytes() == b"logs"
     assert result["downloaded"] is True
     assert result["size_bytes"] == 4
+
+
+def test_execute_loads_known_hosts_when_unknown_hosts_disallowed() -> None:
+    fake_sftp = FakeSftpClient()
+    fake_client = FakeSshClient(fake_sftp)
+    service = SshService(client_factory=lambda: fake_client)
+
+    service.execute(
+        host="10.0.0.10",
+        username="root",
+        command="whoami",
+        allow_unknown_host=False,
+    )
+
+    assert fake_client.loaded_system_host_keys is True

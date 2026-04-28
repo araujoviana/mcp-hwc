@@ -7,12 +7,14 @@ import io
 import json
 from pathlib import Path
 import re
+import secrets
 import shutil
 import subprocess
 import tempfile
 import time
 from typing import Callable, TypeVar
 from urllib.parse import urlparse
+import uuid
 import zipfile
 
 from mcp.server.fastmcp import FastMCP
@@ -798,6 +800,218 @@ def _ensure_swr_namespace_and_repo(
                 raise
 
 
+def _generate_secret_password(prefix: str = "Mcp") -> str:
+    token = re.sub(r"[^A-Za-z0-9]", "", secrets.token_urlsafe(12))[:12]
+    return f"{prefix}{token}9!"
+
+
+def _pick_default_vpc(vpcs: list[dict[str, object]]) -> dict[str, object]:
+    if not vpcs:
+        raise HelperToolError("No VPCs are available in the selected region")
+    for candidate in vpcs:
+        if candidate.get("name") == "vpc-default":
+            return candidate
+    return vpcs[0]
+
+
+def _pick_default_subnet(subnets: list[dict[str, object]]) -> dict[str, object]:
+    if not subnets:
+        raise HelperToolError("No subnets are available in the selected VPC")
+    for candidate in subnets:
+        if candidate.get("name") == "subnet-default":
+            return candidate
+    return subnets[0]
+
+
+def _pick_sfs_availability_zone(
+    share_types: list[dict[str, object]],
+    *,
+    requested_share_type: str,
+) -> str:
+    normalized_share_type = requested_share_type.strip().lower()
+    for item in share_types:
+        if str(item.get("share_type", "")).strip().lower() != normalized_share_type:
+            continue
+        for zone in item.get("available_zones") or []:
+            if str(zone.get("status", "")).strip().lower() == "active":
+                az = zone.get("available_zone")
+                if isinstance(az, str) and az.strip():
+                    return az
+    raise HelperToolError(
+        f"No active availability zone found for SFS share type {requested_share_type}"
+    )
+
+
+def _pick_access_image(images: list[dict[str, object]]) -> dict[str, object]:
+    ranked: list[tuple[int, dict[str, object]]] = []
+    for image in images:
+        if str(image.get("status", "")).strip().lower() != "active":
+            continue
+        platform = str(image.get("__platform") or image.get("platform") or "").lower()
+        os_version = str(image.get("__os_version") or image.get("os_version") or "").lower()
+        image_id = image.get("id")
+        if not isinstance(image_id, str) or not image_id.strip():
+            continue
+        if "linux" not in str(image.get("__os_type") or image.get("os_type") or "Linux").lower():
+            continue
+
+        score = 100
+        if "ubuntu" in platform and "24.04" in os_version:
+            score = 0
+        elif "ubuntu" in platform:
+            score = 1
+        elif "openeuler" in platform or "debian" in platform or "centos" in platform:
+            score = 2
+        ranked.append((score, image))
+
+    if not ranked:
+        raise HelperToolError("No suitable public Linux image was found for the access VM")
+    ranked.sort(key=lambda item: (item[0], str(item[1].get("name") or item[1].get("id"))))
+    return ranked[0][1]
+
+
+def _normal_azs_for_flavor(flavor: dict[str, object]) -> list[str]:
+    extra_specs = flavor.get("os_extra_specs")
+    if not isinstance(extra_specs, dict):
+        return []
+    condition = extra_specs.get("cond:operation:az")
+    if not isinstance(condition, str):
+        return []
+
+    zones: list[str] = []
+    for entry in condition.split(","):
+        text = entry.strip()
+        if not text.endswith("(normal)"):
+            continue
+        zones.append(text[: -len("(normal)")])
+    return zones
+
+
+def _pick_access_vm_flavor(
+    flavors: list[dict[str, object]],
+    *,
+    preferred_az: str,
+) -> tuple[dict[str, object], str]:
+    ranked: list[tuple[int, int, str, dict[str, object], str]] = []
+    for flavor in flavors:
+        flavor_id = flavor.get("id")
+        if not isinstance(flavor_id, str) or not flavor_id.strip():
+            continue
+        if "gpus" in flavor and flavor.get("gpus"):
+            continue
+        normal_azs = _normal_azs_for_flavor(flavor)
+        if not normal_azs:
+            continue
+        vcpus = int(str(flavor.get("vcpus") or 0))
+        ram = int(flavor.get("ram") or 0)
+        selected_az = preferred_az if preferred_az in normal_azs else normal_azs[0]
+        az_penalty = 0 if selected_az == preferred_az else 1
+        ranked.append((az_penalty, vcpus, ram, flavor_id, selected_az))
+
+    if not ranked:
+        raise HelperToolError("No suitable ECS flavor was found for the access VM")
+    ranked.sort(key=lambda item: (item[0], item[1], item[2], item[3]))
+    _, _, _, flavor_id, selected_az = ranked[0]
+    return ({"id": flavor_id}, selected_az)
+
+
+def _extract_server_ips(server: dict[str, object]) -> tuple[str | None, str | None]:
+    private_ip = None
+    public_ip = None
+    addresses = server.get("addresses")
+    if not isinstance(addresses, dict):
+        return private_ip, public_ip
+
+    for network_entries in addresses.values():
+        if not isinstance(network_entries, list):
+            continue
+        for entry in network_entries:
+            if not isinstance(entry, dict):
+                continue
+            addr = entry.get("addr")
+            if not isinstance(addr, str) or not addr.strip():
+                continue
+            address_type = str(entry.get("OS-EXT-IPS:type") or "").strip().lower()
+            if address_type == "floating" and public_ip is None:
+                public_ip = addr
+            elif address_type == "fixed" and private_ip is None:
+                private_ip = addr
+    return private_ip, public_ip
+
+
+def _wait_for_service_value(
+    service: HuaweiCloudSdkService,
+    *,
+    operation: str,
+    parameters: dict[str, object] | None,
+    response_path: str,
+    expected_value: object | None = None,
+    match_mode: str = "equals",
+    timeout_seconds: int = 900,
+    interval_seconds: int = 10,
+) -> dict[str, object]:
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        result = service.call_operation(operation, parameters)
+        value = _extract_path_value(result, response_path)
+        if _wait_condition_matches(
+            value,
+            expected_value=expected_value,
+            match_mode=match_mode,
+        ):
+            return result
+        if time.monotonic() >= deadline:
+            raise HelperToolError(
+                f"Timed out waiting for {service._spec.name}.{operation} {response_path}; last value was {value!r}"
+            )
+        time.sleep(interval_seconds)
+
+
+def _mount_sfs_share_via_ssh(
+    *,
+    host: str,
+    username: str,
+    password: str,
+    export_location: str,
+    mount_path: str,
+) -> dict[str, object]:
+    ssh_service = get_ssh_service()
+    commands = [
+        "apt-get update",
+        "DEBIAN_FRONTEND=noninteractive apt-get install -y nfs-common",
+        f"mkdir -p {mount_path}",
+        f"mount -t nfs -o vers=3,timeo=600,noresvport,nolock {export_location} {mount_path}",
+        f"printf 'sfs proof %s\\n' \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\" > {mount_path}/proof.txt",
+        f"grep -q '^{re.escape(export_location)} {re.escape(mount_path)} nfs ' /etc/fstab || printf '{export_location} {mount_path} nfs vers=3,timeo=600,noresvport,nolock,_netdev 0 0\\n' >> /etc/fstab",
+        f"cat {mount_path}/proof.txt",
+        f"df -h {mount_path}",
+        f"mount | grep ' {mount_path} '",
+        f"ls -la {mount_path}",
+    ]
+
+    results: list[dict[str, object]] = []
+    for command in commands:
+        result = ssh_service.execute(
+            host=host,
+            username=username,
+            command=command,
+            password=password,
+            allow_unknown_host=True,
+            connect_timeout=20,
+            command_timeout=600,
+        )
+        if result["exit_status"] != 0:
+            raise HelperToolError(
+                f"Failed to prepare SFS mount on {username}@{host}: {result['stderr'] or result['stdout']}"
+            )
+        results.append(result)
+    return {
+        "proof_text": results[-4]["stdout"].strip(),
+        "filesystem_report": results[-3]["stdout"].strip(),
+        "mount_report": results[-2]["stdout"].strip(),
+        "directory_listing": results[-1]["stdout"].strip(),
+    }
+
 @mcp.tool()
 def obs_list_buckets() -> dict[str, object]:
     """List OBS buckets accessible to the configured credentials."""
@@ -1337,6 +1551,280 @@ def postgres_execute_sql(
         }
 
     return _run_tool_call(execute_sql)
+
+
+@mcp.tool()
+def sfs_create_accessible_share(
+    region: str,
+    client_cidr: str,
+    share_name: str | None = None,
+    size_gb: int = 500,
+    share_type: str = "STANDARD",
+    vpc_id: str | None = None,
+    subnet_id: str | None = None,
+    availability_zone: str | None = None,
+    access_vm_name: str | None = None,
+    access_vm_password: str | None = None,
+    mount_path: str = "/mnt/sfs-demo",
+) -> dict[str, object]:
+    """Create an SFS share plus a public access VM, mount it, and return proof."""
+
+    def provision_share() -> dict[str, object]:
+        if size_gb <= 0:
+            raise ValueError("size_gb must be greater than zero")
+        if not client_cidr.strip():
+            raise ValueError("client_cidr cannot be empty")
+        if not mount_path.startswith("/"):
+            raise ValueError("mount_path must be an absolute path")
+
+        normalized_share_type = share_type.strip().upper()
+        if normalized_share_type not in {"STANDARD", "PERFORMANCE"}:
+            raise ValueError("share_type must be STANDARD or PERFORMANCE")
+
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+        resolved_share_name = share_name or f"mcphwcsfs{timestamp}"
+        resolved_vm_name = access_vm_name or f"{resolved_share_name}-client"
+        resolved_vm_password = access_vm_password or _generate_secret_password("McpSfsVm")
+
+        vpc_service = _get_resolved_sdk_service("vpc", region=region)
+        sfs_service = _get_resolved_sdk_service("sfs", region=region)
+        ims_service = _get_resolved_sdk_service("ims", region=region)
+        ecs_service = _get_resolved_sdk_service("ecs", region=region)
+
+        resolved_vpc_id = vpc_id
+        if resolved_vpc_id is None:
+            vpcs = vpc_service.call_operation("list_vpcs", {"limit": 100})["response"].get("vpcs") or []
+            resolved_vpc_id = _pick_default_vpc(vpcs)["id"]
+
+        resolved_subnet_id = subnet_id
+        if resolved_subnet_id is None:
+            subnets = vpc_service.call_operation(
+                "list_subnets",
+                {"limit": 100, "vpc_id": resolved_vpc_id},
+            )["response"].get("subnets") or []
+            resolved_subnet_id = _pick_default_subnet(subnets)["id"]
+
+        subnet = vpc_service.call_operation("show_subnet", {"subnet_id": resolved_subnet_id})["response"].get("subnet") or {}
+        subnet_cidr = subnet.get("cidr")
+        if not isinstance(subnet_cidr, str) or not subnet_cidr.strip():
+            raise HelperToolError("Could not resolve the subnet CIDR for the SFS permission rule")
+
+        resolved_availability_zone = availability_zone
+        if resolved_availability_zone is None:
+            share_types = sfs_service.call_operation(
+                "list_share_types",
+                {"limit": 100, "offset": 0},
+            )["response"].get("share_types") or []
+            resolved_availability_zone = _pick_sfs_availability_zone(
+                share_types,
+                requested_share_type=normalized_share_type,
+            )
+
+        sg_name = f"mcp-hwc-sfs-{timestamp}"
+        security_group = vpc_service.call_operation(
+            "create_security_group",
+            {"body": {"security_group": {"name": sg_name, "vpc_id": resolved_vpc_id}}},
+        )["response"].get("security_group") or {}
+        security_group_id = security_group.get("id")
+        if not isinstance(security_group_id, str) or not security_group_id.strip():
+            raise HelperToolError("Failed to create the access security group")
+
+        vpc_service.call_operation(
+            "create_security_group_rule",
+            {
+                "body": {
+                    "security_group_rule": {
+                        "security_group_id": security_group_id,
+                        "description": "SSH from client",
+                        "direction": "ingress",
+                        "ethertype": "IPv4",
+                        "protocol": "tcp",
+                        "port_range_min": 22,
+                        "port_range_max": 22,
+                        "remote_ip_prefix": client_cidr,
+                    }
+                }
+            },
+        )
+
+        share_response = sfs_service.call_operation(
+            "create_share",
+            {
+                "body": {
+                    "share": {
+                        "availability_zone": resolved_availability_zone,
+                        "description": "SFS share created by mcp-hwc",
+                        "name": resolved_share_name,
+                        "security_group_id": security_group_id,
+                        "share_proto": "NFS",
+                        "share_type": normalized_share_type,
+                        "size": size_gb,
+                        "subnet_id": resolved_subnet_id,
+                        "vpc_id": resolved_vpc_id,
+                        "tags": [
+                            {"key": "managed-by", "value": "mcp-hwc"},
+                            {"key": "purpose", "value": "sfs-demo"},
+                        ],
+                    }
+                }
+            },
+        )
+        share_id = share_response["response"].get("id")
+        if not isinstance(share_id, str) or not share_id.strip():
+            raise HelperToolError("SFS did not return a share ID")
+
+        share_result = _wait_for_service_value(
+            sfs_service,
+            operation="show_share",
+            parameters={"share_id": share_id},
+            response_path="response.status",
+            expected_value="200",
+            timeout_seconds=1200,
+            interval_seconds=10,
+        )
+        share = share_result["response"]
+        export_location = share.get("export_location")
+        if not isinstance(export_location, str) or not export_location.strip():
+            raise HelperToolError("SFS did not become mountable")
+
+        perm_rules = sfs_service.call_operation(
+            "list_perm_rules",
+            {"share_id": share_id, "limit": 100, "offset": 0},
+        )["response"].get("rules") or []
+        for rule in perm_rules:
+            if rule.get("ip_cidr") == "*":
+                rule_id = rule.get("id")
+                if isinstance(rule_id, str) and rule_id.strip():
+                    sfs_service.call_operation(
+                        "delete_perm_rule",
+                        {"share_id": share_id, "rule_id": rule_id},
+                    )
+
+        if not any(rule.get("ip_cidr") == subnet_cidr for rule in perm_rules):
+            sfs_service.call_operation(
+                "create_perm_rule",
+                {
+                    "share_id": share_id,
+                    "body": {
+                        "rules": [
+                            {
+                                "ip_cidr": subnet_cidr,
+                                "rw_type": "rw",
+                                "user_type": "no_root_squash",
+                            }
+                        ]
+                    },
+                },
+            )
+
+        images = ims_service.call_operation(
+            "list_images",
+            {"limit": 100, "visibility": "public", "os_type": "Linux"},
+        )["response"].get("images") or []
+        image = _pick_access_image(images)
+
+        flavors = ecs_service.call_operation("list_flavors", {"limit": 200})["response"].get("flavors") or []
+        flavor, vm_az = _pick_access_vm_flavor(flavors, preferred_az=resolved_availability_zone)
+
+        create_vm = ecs_service.call_operation(
+            "create_servers",
+            {
+                "x_client_token": str(uuid.uuid4()),
+                "body": {
+                    "server": {
+                        "imageRef": image["id"],
+                        "flavorRef": flavor["id"],
+                        "name": resolved_vm_name,
+                        "adminPass": resolved_vm_password,
+                        "vpcid": resolved_vpc_id,
+                        "nics": [{"subnet_id": resolved_subnet_id}],
+                        "publicip": {
+                            "eip": {
+                                "iptype": "5_bgp",
+                                "bandwidth": {
+                                    "size": 5,
+                                    "sharetype": "PER",
+                                    "chargemode": "traffic",
+                                },
+                            },
+                            "delete_on_termination": True,
+                        },
+                        "count": 1,
+                        "root_volume": {"volumetype": "GPSSD", "size": 40},
+                        "security_groups": [{"id": security_group_id}],
+                        "availability_zone": vm_az,
+                        "extendparam": {
+                            "chargingMode": "postPaid",
+                            "regionID": region,
+                            "isAutoPay": "true",
+                        },
+                    }
+                },
+            },
+        )
+        job_id = create_vm["response"].get("job_id")
+        if not isinstance(job_id, str) or not job_id.strip():
+            raise HelperToolError("ECS did not return a create job ID")
+
+        _wait_for_service_value(
+            ecs_service,
+            operation="show_job",
+            parameters={"job_id": job_id},
+            response_path="response.status",
+            expected_value="SUCCESS",
+            timeout_seconds=1200,
+            interval_seconds=10,
+        )
+
+        servers = ecs_service.call_operation(
+            "list_servers_details",
+            {"name": resolved_vm_name},
+        )["response"].get("servers") or []
+        if not servers:
+            raise HelperToolError("Could not locate the access VM after creation")
+        server = servers[0]
+        private_ip, public_ip = _extract_server_ips(server)
+        if not public_ip:
+            raise HelperToolError("Access VM did not receive a public IP")
+
+        mount_result = _mount_sfs_share_via_ssh(
+            host=public_ip,
+            username="root",
+            password=resolved_vm_password,
+            export_location=export_location,
+            mount_path=mount_path,
+        )
+
+        return {
+            "region": region,
+            "share": {
+                "id": share_id,
+                "name": share.get("name") or resolved_share_name,
+                "availability_zone": resolved_availability_zone,
+                "size_gb": size_gb,
+                "share_type": normalized_share_type,
+                "export_location": export_location,
+                "endpoint": share.get("optional_endpoint"),
+                "security_group_id": security_group_id,
+                "allowed_mount_cidr": subnet_cidr,
+            },
+            "access_vm": {
+                "id": server.get("id"),
+                "name": server.get("name") or resolved_vm_name,
+                "availability_zone": vm_az,
+                "image_id": image["id"],
+                "flavor_id": flavor["id"],
+                "private_ip": private_ip,
+                "public_ip": public_ip,
+                "username": "root",
+                "password": resolved_vm_password,
+                "mount_path": mount_path,
+                "ssh_allowed_cidr": client_cidr,
+            },
+            "proof": mount_result,
+        }
+
+    return _run_tool_call(provision_share)
 
 
 @mcp.tool()
