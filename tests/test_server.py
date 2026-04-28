@@ -713,6 +713,77 @@ def test_generic_tool_resolves_service_alias(monkeypatch: pytest.MonkeyPatch) ->
     assert result["response"]["ok"] is True
 
 
+def test_wait_for_condition_polls_until_match(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, object]] = []
+    responses = iter(
+        [
+            {
+                "service": "rds",
+                "region": "la-south-2",
+                "endpoint": "https://rds.la-south-2.myhuaweicloud.com",
+                "response": {"instances": [{"status": "BUILD"}]},
+            },
+            {
+                "service": "rds",
+                "region": "la-south-2",
+                "endpoint": "https://rds.la-south-2.myhuaweicloud.com",
+                "response": {"instances": [{"status": "ACTIVE"}]},
+            },
+        ]
+    )
+
+    class FakePollingService:
+        def call_operation(self, operation: str, parameters=None) -> dict[str, object]:
+            calls.append((operation, parameters))
+            return next(responses)
+
+    monkeypatch.setattr(
+        server,
+        "_get_resolved_sdk_service",
+        lambda *args, **kwargs: FakePollingService(),
+    )
+    monkeypatch.setattr(server.time, "sleep", lambda seconds: None)
+
+    result = server.huaweicloud_wait_for_condition(
+        service_name="rds",
+        operation="list_instances",
+        parameters={"id": "instance-1"},
+        response_path="response.instances[0].status",
+        expected_value="ACTIVE",
+        region="la-south-2",
+        timeout_seconds=30,
+        interval_seconds=1,
+    )
+
+    assert len(calls) == 2
+    assert result["matched"] is True
+    assert result["value"] == "ACTIVE"
+    assert result["last_result"]["response"]["instances"][0]["status"] == "ACTIVE"
+
+
+def test_postgres_execute_sql_uses_cli_runner(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_cli = FakeCliService(backend="container", stdout="PostgreSQL 16.10\n")
+    monkeypatch.setattr(server, "get_cli_service", lambda: fake_cli)
+
+    result = server.postgres_execute_sql(
+        host="176.52.138.63",
+        port=5432,
+        username="root",
+        password="secret",
+        database="postgres",
+        sql="select version();",
+    )
+
+    assert result["backend"] == "container"
+    assert result["row_count"] == 1
+    assert result["rows"] == [["PostgreSQL 16.10"]]
+    execute_call = next(call for call in fake_cli.calls if call[0] == "execute_container")
+    assert execute_call[1]["entrypoint"] == "psql"
+    assert "--host" in execute_call[1]["args"]
+    assert execute_call[1]["env"]["PGPASSWORD"] == "secret"
+    assert execute_call[1]["env"]["PGSSLMODE"] == "require"
+
+
 def test_obs_upload_file_calls_service(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(server, "get_obs_service", lambda: FakeObsService())
 
