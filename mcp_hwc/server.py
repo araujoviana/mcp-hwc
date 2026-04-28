@@ -10,6 +10,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 from typing import Callable, TypeVar
 from urllib.parse import urlparse
 import zipfile
@@ -55,7 +56,10 @@ _MCP_INSTRUCTIONS = (
     "images to SWR, `functiongraph_deploy_code` to zip and upload local function "
     "source, `cce_get_kubeconfig` to export cluster access config, `k8s_*` tools "
     "for kubectl-style operations, `helm_*` tools for chart management, and "
-    "`lts_query_logs` to resolve LTS groups or streams and filter logs.\n\n"
+    "`lts_query_logs` to resolve LTS groups or streams and filter logs. Use "
+    "`huaweicloud_wait_for_condition` for long-running asynchronous cloud workflows, "
+    "and `postgres_execute_sql` when you need to validate PostgreSQL connectivity "
+    "from the MCP host.\n\n"
     "Use `huaweicloud_list_services` to discover supported services, aliases, and "
     "API versions. Use `huaweicloud_summarize_capabilities` when you need a fast "
     "answer about what a service can do at the SDK level. Use `huaweicloud_resolve_defaults` "
@@ -334,6 +338,96 @@ def _parse_json_output(stdout: str) -> object | None:
         return json.loads(text)
     except json.JSONDecodeError:
         return None
+
+
+def _parse_path_segments(path: str) -> list[str | int]:
+    if not path.strip():
+        raise ValueError("response_path cannot be empty")
+
+    segments: list[str | int] = []
+    for chunk in path.split("."):
+        if not chunk:
+            raise ValueError(f"Invalid response_path: {path}")
+
+        cursor = 0
+        while cursor < len(chunk):
+            if chunk[cursor] == "[":
+                end = chunk.find("]", cursor)
+                if end == -1:
+                    raise ValueError(f"Invalid response_path: {path}")
+                index_text = chunk[cursor + 1 : end].strip()
+                if not index_text.isdigit():
+                    raise ValueError(f"Invalid response_path index: {path}")
+                segments.append(int(index_text))
+                cursor = end + 1
+                continue
+
+            next_bracket = chunk.find("[", cursor)
+            token_end = next_bracket if next_bracket != -1 else len(chunk)
+            token = chunk[cursor:token_end]
+            if not token:
+                raise ValueError(f"Invalid response_path: {path}")
+            segments.append(token)
+            cursor = token_end
+
+    return segments
+
+
+def _extract_path_value(payload: object, path: str) -> object:
+    current = payload
+    for segment in _parse_path_segments(path):
+        if isinstance(segment, int):
+            if not isinstance(current, list):
+                raise HelperToolError(
+                    f"response_path segment [{segment}] requires a list value"
+                )
+            if segment >= len(current):
+                raise HelperToolError(
+                    f"response_path index [{segment}] is out of range"
+                )
+            current = current[segment]
+            continue
+
+        if not isinstance(current, dict):
+            raise HelperToolError(
+                f"response_path segment '{segment}' requires an object value"
+            )
+        if segment not in current:
+            raise HelperToolError(f"response_path segment '{segment}' was not found")
+        current = current[segment]
+
+    return current
+
+
+def _wait_condition_matches(
+    value: object,
+    *,
+    expected_value: object | None,
+    match_mode: str,
+) -> bool:
+    if match_mode == "truthy":
+        return bool(value)
+    if match_mode == "equals":
+        return value == expected_value
+    if match_mode == "contains":
+        if isinstance(value, str):
+            return isinstance(expected_value, str) and expected_value in value
+        if isinstance(value, list):
+            return expected_value in value
+        if isinstance(value, dict):
+            return isinstance(expected_value, str) and expected_value in value
+        raise ValueError("contains match_mode only supports string, list, or object values")
+    raise ValueError("match_mode must be one of: equals, contains, truthy")
+
+
+def _parse_psql_rows(stdout: str) -> list[list[str]]:
+    rows: list[list[str]] = []
+    for line in stdout.splitlines():
+        stripped = line.rstrip("\n")
+        if not stripped:
+            continue
+        rows.append(stripped.split("\t"))
+    return rows
 
 
 def _prepare_chart_reference(
@@ -994,6 +1088,90 @@ def huaweicloud_call_operation(
 
 
 @mcp.tool()
+def huaweicloud_wait_for_condition(
+    service_name: str,
+    operation: str,
+    response_path: str,
+    expected_value: object | None = None,
+    match_mode: str | None = None,
+    parameters: dict[str, object] | None = None,
+    region: str | None = None,
+    project_id: str | None = None,
+    domain_id: str | None = None,
+    endpoint: str | None = None,
+    api_version: str | None = None,
+    timeout_seconds: int = 600,
+    interval_seconds: int = 10,
+) -> dict[str, object]:
+    """Poll a Huawei Cloud SDK operation until a response field matches a condition."""
+
+    def wait_for_condition() -> dict[str, object]:
+        if timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be greater than zero")
+        if interval_seconds <= 0:
+            raise ValueError("interval_seconds must be greater than zero")
+
+        resolved_mode = match_mode or ("truthy" if expected_value is None else "equals")
+        resolved_service = _get_resolved_sdk_service(
+            service_name,
+            api_version=api_version,
+            region=_resolve_sdk_region(region, parameters, endpoint),
+            project_id=project_id,
+            domain_id=domain_id,
+            endpoint=endpoint,
+        )
+
+        deadline = time.monotonic() + timeout_seconds
+        attempts = 0
+        last_result: dict[str, object] | None = None
+        last_value: object | None = None
+        last_error: str | None = None
+        started_at = time.monotonic()
+
+        while True:
+            attempts += 1
+            last_result = resolved_service.call_operation(
+                operation=operation,
+                parameters=parameters,
+            )
+            try:
+                last_value = _extract_path_value(last_result, response_path)
+                last_error = None
+            except HelperToolError as exc:
+                last_value = None
+                last_error = str(exc)
+            else:
+                if _wait_condition_matches(
+                    last_value,
+                    expected_value=expected_value,
+                    match_mode=resolved_mode,
+                ):
+                    return {
+                        "service": last_result["service"],
+                        "operation": operation,
+                        "region": last_result["region"],
+                        "endpoint": last_result["endpoint"],
+                        "response_path": response_path,
+                        "match_mode": resolved_mode,
+                        "expected_value": expected_value,
+                        "matched": True,
+                        "attempts": attempts,
+                        "elapsed_seconds": round(time.monotonic() - started_at, 3),
+                        "value": last_value,
+                        "last_result": last_result,
+                    }
+
+            if time.monotonic() >= deadline:
+                detail = last_error or f"last value: {last_value!r}"
+                raise HelperToolError(
+                    f"Timed out waiting for {service_name}.{operation} {response_path} with match_mode={resolved_mode}; {detail}"
+                )
+            time.sleep(interval_seconds)
+
+    return _run_tool_call(wait_for_condition)
+
+
+@mcp.tool()
 def functiongraph_deploy_code(
     source_path: str,
     region: str | None = None,
@@ -1084,6 +1262,81 @@ def functiongraph_deploy_code(
         return result
 
     return _run_tool_call(deploy)
+
+
+@mcp.tool()
+def postgres_execute_sql(
+    host: str,
+    username: str,
+    password: str,
+    sql: str,
+    port: int = 5432,
+    database: str = "postgres",
+    sslmode: str = "require",
+    connect_timeout: int = 15,
+    execution_backend: str = "auto",
+    container_image: str | None = None,
+) -> dict[str, object]:
+    """Execute a SQL statement against a PostgreSQL server using psql."""
+
+    def execute_sql() -> dict[str, object]:
+        if not host.strip():
+            raise ValueError("host cannot be empty")
+        if not username.strip():
+            raise ValueError("username cannot be empty")
+        if not sql.strip():
+            raise ValueError("sql cannot be empty")
+        if port <= 0:
+            raise ValueError("port must be greater than zero")
+        if connect_timeout <= 0:
+            raise ValueError("connect_timeout must be greater than zero")
+
+        env = {
+            "PGPASSWORD": password,
+            "PGSSLMODE": sslmode,
+            "PGCONNECT_TIMEOUT": str(connect_timeout),
+        }
+        args = [
+            "--host",
+            host,
+            "--port",
+            str(port),
+            "--username",
+            username,
+            "--dbname",
+            database,
+            "--no-password",
+            "--no-psqlrc",
+            "--set",
+            "ON_ERROR_STOP=1",
+            "--tuples-only",
+            "--no-align",
+            "--field-separator",
+            "\t",
+            "--command",
+            sql,
+        ]
+
+        result = _execute_cli_tool(
+            "psql",
+            args,
+            execution_backend=execution_backend,
+            container_image=container_image,
+            env=env,
+        )
+        rows = _parse_psql_rows(result["stdout"])
+        return {
+            **result,
+            "host": host,
+            "port": port,
+            "database": database,
+            "username": username,
+            "sslmode": sslmode,
+            "rows": rows,
+            "row_count": len(rows),
+        }
+
+    return _run_tool_call(execute_sql)
 
 
 @mcp.tool()

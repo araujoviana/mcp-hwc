@@ -16,6 +16,7 @@ ExecutionBackend = str
 DEFAULT_TOOL_IMAGES = {
     "kubectl": "bitnami/kubectl:1.31.0",
     "helm": "alpine/helm:3.16.4",
+    "psql": "postgres:16-alpine",
 }
 
 
