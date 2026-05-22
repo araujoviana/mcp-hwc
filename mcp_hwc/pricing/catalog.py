@@ -2,7 +2,30 @@ from __future__ import annotations
 
 from mcp_hwc.regions import normalize_region_input
 
-SERVICE_MAP: dict[str, str] = {
+CLOUD_SERVICE_TYPES: dict[str, str] = {
+    "ecs": "hws.service.type.ec2",
+    "evs": "hws.service.type.evs",
+    "vpc": "hws.service.type.vpc",
+    "eip": "hws.service.type.eip",
+    "elb": "hws.service.type.elb",
+    "nat": "hws.service.type.nat",
+    "rds": "hws.service.type.rds",
+    "dds": "hws.service.type.dds",
+    "dcs": "hws.service.type.dcs",
+    "dms": "hws.service.type.dms",
+    "obs": "hws.service.type.obs",
+    "sfs": "hws.service.type.sfs",
+    "cce": "hws.service.type.cce",
+    "functiongraph": "hws.service.type.functiongraph",
+    "kms": "hws.service.type.kms",
+    "smn": "hws.service.type.smn",
+    "ces": "hws.service.type.ces",
+    "dns": "hws.service.type.dns",
+    "waf": "hws.service.type.waf",
+    "cdn": "hws.service.type.cdn",
+}
+
+RESOURCE_TYPES: dict[str, str] = {
     "ecs": "hws.resource.type.ec2",
     "evs": "hws.resource.type.evs",
     "vpc": "hws.resource.type.vpc",
@@ -25,18 +48,24 @@ SERVICE_MAP: dict[str, str] = {
     "cdn": "hws.resource.type.cdn",
 }
 
+SERVICE_MAP = CLOUD_SERVICE_TYPES
 
-def resolve_cloud_service_type(service: str) -> str:
+
+def _resolve(service: str, mapping: dict[str, str], label: str) -> str:
     key = service.strip().lower()
-    code = SERVICE_MAP.get(key)
+    code = mapping.get(key)
     if code is None:
-        known = ", ".join(sorted(SERVICE_MAP.keys()))
+        known = ", ".join(sorted(mapping.keys()))
         raise ValueError(f"unknown service '{service}'. Known services: {known}")
     return code
 
 
+def resolve_cloud_service_type(service: str) -> str:
+    return _resolve(service, CLOUD_SERVICE_TYPES, "cloud_service_type")
+
+
 def resolve_resource_type(service: str) -> str:
-    return resolve_cloud_service_type(service)
+    return _resolve(service, RESOURCE_TYPES, "resource_type")
 
 
 def resolve_region(region: str) -> str:

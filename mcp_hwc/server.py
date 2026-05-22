@@ -1,29 +1,66 @@
 from __future__ import annotations
 
-import base64
-from datetime import datetime, timedelta, timezone
 from functools import lru_cache
-import io
-import json
+import os
 from pathlib import Path
-import re
-import secrets
 import shutil
 import subprocess
-import tempfile
 import time
 from typing import Callable, TypeVar
 from urllib.parse import urlparse
-import uuid
-import zipfile
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 
 from .cli_service import DEFAULT_TOOL_IMAGES, CliService, CliServiceError, ContainerMount
 from .config import CloudApiConfig, ConfigError, ObsConfig
+from .compute import (
+    create_ecs_security_group as _create_ecs_security_group,
+    extract_first_string as _extract_first_string,
+    extract_server_ips as _extract_server_ips,
+    generate_secret_password as _generate_secret_password,
+    normal_azs_for_flavor as _normal_azs_for_flavor,
+    pick_access_image as _pick_access_image,
+    pick_access_vm_flavor as _pick_access_vm_flavor,
+    pick_default_subnet as _pick_default_subnet,
+    pick_default_vpc as _pick_default_vpc,
+    pick_sfs_availability_zone as _pick_sfs_availability_zone,
+    resolve_ecs_flavor as _resolve_ecs_flavor,
+    resolve_ecs_image as _resolve_ecs_image,
+    resolve_vpc_and_subnet as _resolve_vpc_and_subnet,
+    select_named_resource as _select_named_resource,
+)
 from .defaults import resolve_service_defaults
+from .errors import HelperToolError
+from .local_artifacts import (
+    format_cli_value as _format_cli_value,
+    package_functiongraph_source as _package_functiongraph_source,
+    parse_json_output as _parse_json_output,
+    parse_psql_rows as _parse_psql_rows,
+    prepare_chart_reference as _prepare_chart_reference,
+    prepare_helm_values_file as _prepare_helm_values_file,
+    prepare_kubeconfig_for_backend as _prepare_kubeconfig_for_backend,
+    resolve_existing_path as _resolve_existing_path,
+    resolve_output_path as _resolve_output_path,
+    serialize_kubeconfig_document as _serialize_kubeconfig_document,
+)
+from .lts_workflow import (
+    filter_lts_logs as _filter_lts_logs,
+    normalize_time_ms as _normalize_time_ms,
+    query_lts_logs,
+    resolve_lts_log_group as _resolve_lts_log_group,
+    resolve_lts_log_stream as _resolve_lts_log_stream,
+)
 from .obs_service import ObsService, ObsServiceError
+from .polling import (
+    DEFAULT_POLL_INTERVAL_SECONDS as _DEFAULT_POLL_INTERVAL_SECONDS,
+    MIN_POLL_INTERVAL_SECONDS as _MIN_POLL_INTERVAL_SECONDS,
+    extract_path_value as _extract_path_value,
+    resolve_poll_interval as _resolve_poll_interval,
+    sleep_before_next_poll as _sleep_before_next_poll,
+    wait_for_service_value as _wait_for_service_value,
+    wait_condition_matches as _wait_condition_matches,
+)
 from .sdk_service import (
     HuaweiCloudSdkError,
     HuaweiCloudSdkService,
@@ -33,14 +70,29 @@ from .sdk_service import (
     summarize_service_capabilities,
 )
 from .ssh_service import SshService, SshServiceError
+from .swr_workflow import (
+    decode_swr_auth as _decode_swr_auth,
+    ensure_swr_namespace_and_repo as _ensure_swr_namespace_and_repo,
+    looks_like_existing_resource_error as _looks_like_existing_resource_error,
+    normalize_registry_host as _normalize_registry_host,
+    resolve_container_cli as _resolve_container_cli,
+    run_local_command as _run_local_command,
+    upload_swr_image,
+)
+from .pricing.models import QuoteItem, QuoteResult, ResourceDescriptor
+from .pricing.bss_pricing import BssAccessDenied, BssPricingBackend, PricingNotAvailable
+from .pricing.catalog import resolve_region as _pricing_resolve_region
+from .pricing.persistence import QuoteStore
+from .pricing.tools import export_csv, export_json, export_terraform, format_text
+from .pricing.web_pricing import WebPricingBackend
+from .workflows.ecs import create_ecs_vm as _create_ecs_vm_workflow
+from .workflows.sfs import create_accessible_share as _create_accessible_sfs_share_workflow
 
 T = TypeVar("T")
 
 
-class HelperToolError(RuntimeError):
-    """Raised when a direct convenience tool cannot complete locally."""
-
 _SUPPORTED_SERVICE_NAMES = ", ".join(SERVICE_SPECS)
+_GENERATED_SERVICE_TOOL_ENV = "MCP_HWC_ENABLE_SERVICE_TOOLS"
 _MCP_INSTRUCTIONS = (
     "Ask for as little as possible. When the user asks to create or configure a "
     "Huawei Cloud service, infer and create prerequisites automatically, reuse "
@@ -51,6 +103,10 @@ _MCP_INSTRUCTIONS = (
     "That includes VPCs, subnets, security groups, routes, images, node pools, "
     "public access, load balancers, storage, backups, and KMS resources when the "
     "requested service depends on them.\n\n"
+    "Prefer direct workflow tools over raw SDK calls. For ECS virtual machines, use "
+    "`ecs_create_vm` first; it resolves the usual VPC, subnet, image, flavor, security "
+    "group, and create payload from minimal input. Use raw SDK tools only for uncommon "
+    "operations or when a workflow helper cannot express the request.\n\n"
     "When a service exposes an SSH endpoint, use `ssh_execute`, `ssh_upload_file`, "
     "and `ssh_download_file` to finish post-provisioning tasks such as package "
     "installation or configuration management. Use OBS file-transfer tools for "
@@ -58,10 +114,15 @@ _MCP_INSTRUCTIONS = (
     "images to SWR, `functiongraph_deploy_code` to zip and upload local function "
     "source, `cce_get_kubeconfig` to export cluster access config, `k8s_*` tools "
     "for kubectl-style operations, `helm_*` tools for chart management, and "
-    "`lts_query_logs` to resolve LTS groups or streams and filter logs. Use "
-    "`huaweicloud_wait_for_condition` for long-running asynchronous cloud workflows, "
+    "`lts_query_logs` to resolve LTS groups or streams and filter logs. Do not poll "
+    "after creates by default; prefer returning provider job IDs or resource IDs and "
+    "only use `huaweicloud_wait_for_condition` when the next step requires the final "
+    "state. When polling is required, use sparse intervals of at least 60 seconds, "
     "and `postgres_execute_sql` when you need to validate PostgreSQL connectivity "
     "from the MCP host.\n\n"
+    "The default MCP catalog intentionally hides generated per-service SDK tools to "
+    f"save model context. Set `{_GENERATED_SERVICE_TOOL_ENV}=all` or a comma-separated "
+    "service allowlist to expose them. Generic `huaweicloud_*` SDK tools remain available.\n\n"
     "Use `huaweicloud_list_services` to discover supported services, aliases, and "
     "API versions. Use `huaweicloud_summarize_capabilities` when you need a fast "
     "answer about what a service can do at the SDK level. Use `huaweicloud_resolve_defaults` "
@@ -88,6 +149,16 @@ def get_ssh_service() -> SshService:
 @lru_cache(maxsize=1)
 def get_cli_service() -> CliService:
     return CliService()
+
+
+@lru_cache(maxsize=1)
+def get_bss_pricing_backend() -> BssPricingBackend:
+    return BssPricingBackend(CloudApiConfig.from_env("BSS"))
+
+
+@lru_cache(maxsize=1)
+def get_quote_store() -> QuoteStore:
+    return QuoteStore()
 
 
 @lru_cache(maxsize=None)
@@ -143,6 +214,22 @@ def clear_caches() -> None:
     get_ssh_service.cache_clear()
     get_cli_service.cache_clear()
     get_sdk_service.cache_clear()
+    get_bss_pricing_backend.cache_clear()
+    get_quote_store.cache_clear()
+
+
+def _generated_service_tool_enabled(service_name: str) -> bool:
+    configured = os.getenv(_GENERATED_SERVICE_TOOL_ENV, "").strip().lower()
+    if not configured:
+        return False
+    if configured in {"*", "all"}:
+        return True
+    enabled = {
+        item.strip().lower()
+        for item in configured.split(",")
+        if item.strip()
+    }
+    return service_name in enabled
 
 
 def _run_tool_call(call: Callable[[], T]) -> T:
@@ -154,6 +241,7 @@ def _run_tool_call(call: Callable[[], T]) -> T:
         HelperToolError,
         ObsServiceError,
         HuaweiCloudSdkError,
+        PricingNotAvailable,
         SshServiceError,
         ValueError,
     ) as exc:
@@ -207,35 +295,27 @@ def _get_resolved_sdk_service(
     )
 
 
-def _resolve_output_path(
-    destination_path: str | None,
-    *,
-    prefix: str,
-    suffix: str,
-) -> Path:
-    if destination_path is None:
-        handle = tempfile.NamedTemporaryFile(delete=False, prefix=prefix, suffix=suffix)
-        handle.close()
-        return Path(handle.name)
-
-    resolved_path = Path(destination_path).expanduser().resolve()
-    resolved_path.parent.mkdir(parents=True, exist_ok=True)
-    return resolved_path
-
-
-def _serialize_kubeconfig_document(response: dict[str, object]) -> str:
-    kubeconfig = {
-        "apiVersion": response.get("apiVersion") or response.get("api_version") or "v1",
-        "kind": response.get("kind") or "Config",
-        "preferences": response.get("preferences") or {},
-        "clusters": response.get("clusters") or [],
-        "users": response.get("users") or [],
-        "contexts": response.get("contexts") or [],
-        "current-context": response.get("current-context")
-        or response.get("current_context")
-        or "",
-    }
-    return json.dumps(kubeconfig, indent=2, ensure_ascii=True)
+def _list_supported_services_for_mcp(query: str | None = None) -> dict[str, object]:
+    result = list_supported_services(query=query)
+    for service in result.get("services", []):
+        if not isinstance(service, dict):
+            continue
+        service_name = service.get("service")
+        if isinstance(service_name, str) and not _generated_service_tool_enabled(service_name):
+            service["service_tools"] = []
+        service["generic_sdk_tools"] = [
+            "huaweicloud_list_operations",
+            "huaweicloud_describe_operation",
+            "huaweicloud_call_operation",
+        ]
+        if service_name == "ecs":
+            service["workflow_tools"] = ["ecs_create_vm"]
+    result["tooling_notes"] = [
+        "Generated per-service SDK tools are hidden from the MCP catalog by default to save tokens.",
+        f"Set {_GENERATED_SERVICE_TOOL_ENV}=all or a comma-separated service allowlist to expose them.",
+        "Prefer workflow_tools when present; use generic_sdk_tools for uncommon operations.",
+    ]
+    return result
 
 
 def _execute_cli_tool(
@@ -280,737 +360,6 @@ def _execute_cli_tool(
         network=network,
     )
 
-
-def _format_cli_value(value: object) -> str:
-    if isinstance(value, bool):
-        return str(value).lower()
-    if isinstance(value, (dict, list)):
-        return json.dumps(value, separators=(",", ":"), ensure_ascii=True)
-    return str(value)
-
-
-def _prepare_helm_values_file(
-    values: str | None,
-    values_file: str | None,
-) -> tuple[Path | None, bool]:
-    if values and values_file:
-        raise ValueError("Provide either values or values_file, not both")
-    if values_file:
-        return _resolve_existing_path(values_file), False
-    if values is None:
-        return None, False
-
-    temp_file = tempfile.NamedTemporaryFile(
-        delete=False,
-        prefix="mcp-hwc-helm-values-",
-        suffix=".yaml",
-        mode="w",
-        encoding="utf-8",
-    )
-    with temp_file:
-        temp_file.write(values)
-    return Path(temp_file.name), True
-
-
-def _prepare_kubeconfig_for_backend(
-    kubeconfig_path: str,
-    *,
-    context: str | None,
-    backend: str,
-) -> tuple[list[str], list[ContainerMount]]:
-    resolved_path = _resolve_existing_path(kubeconfig_path)
-    if backend == "container":
-        mounted_path = "/tmp/mcp-hwc-kubeconfig"
-        args = ["--kubeconfig", mounted_path]
-        mounts = [ContainerMount(resolved_path, mounted_path, read_only=True)]
-    else:
-        args = ["--kubeconfig", str(resolved_path)]
-        mounts = []
-
-    if context:
-        args.extend(["--context", context])
-    return args, mounts
-
-
-def _parse_json_output(stdout: str) -> object | None:
-    text = stdout.strip()
-    if not text:
-        return None
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        return None
-
-
-def _parse_path_segments(path: str) -> list[str | int]:
-    if not path.strip():
-        raise ValueError("response_path cannot be empty")
-
-    segments: list[str | int] = []
-    for chunk in path.split("."):
-        if not chunk:
-            raise ValueError(f"Invalid response_path: {path}")
-
-        cursor = 0
-        while cursor < len(chunk):
-            if chunk[cursor] == "[":
-                end = chunk.find("]", cursor)
-                if end == -1:
-                    raise ValueError(f"Invalid response_path: {path}")
-                index_text = chunk[cursor + 1 : end].strip()
-                if not index_text.isdigit():
-                    raise ValueError(f"Invalid response_path index: {path}")
-                segments.append(int(index_text))
-                cursor = end + 1
-                continue
-
-            next_bracket = chunk.find("[", cursor)
-            token_end = next_bracket if next_bracket != -1 else len(chunk)
-            token = chunk[cursor:token_end]
-            if not token:
-                raise ValueError(f"Invalid response_path: {path}")
-            segments.append(token)
-            cursor = token_end
-
-    return segments
-
-
-def _extract_path_value(payload: object, path: str) -> object:
-    current = payload
-    for segment in _parse_path_segments(path):
-        if isinstance(segment, int):
-            if not isinstance(current, list):
-                raise HelperToolError(
-                    f"response_path segment [{segment}] requires a list value"
-                )
-            if segment >= len(current):
-                raise HelperToolError(
-                    f"response_path index [{segment}] is out of range"
-                )
-            current = current[segment]
-            continue
-
-        if not isinstance(current, dict):
-            raise HelperToolError(
-                f"response_path segment '{segment}' requires an object value"
-            )
-        if segment not in current:
-            raise HelperToolError(f"response_path segment '{segment}' was not found")
-        current = current[segment]
-
-    return current
-
-
-def _wait_condition_matches(
-    value: object,
-    *,
-    expected_value: object | None,
-    match_mode: str,
-) -> bool:
-    if match_mode == "truthy":
-        return bool(value)
-    if match_mode == "equals":
-        return value == expected_value
-    if match_mode == "contains":
-        if isinstance(value, str):
-            return isinstance(expected_value, str) and expected_value in value
-        if isinstance(value, list):
-            return expected_value in value
-        if isinstance(value, dict):
-            return isinstance(expected_value, str) and expected_value in value
-        raise ValueError("contains match_mode only supports string, list, or object values")
-    raise ValueError("match_mode must be one of: equals, contains, truthy")
-
-
-def _parse_psql_rows(stdout: str) -> list[list[str]]:
-    rows: list[list[str]] = []
-    for line in stdout.splitlines():
-        stripped = line.rstrip("\n")
-        if not stripped:
-            continue
-        rows.append(stripped.split("\t"))
-    return rows
-
-
-def _prepare_chart_reference(
-    chart: str,
-    *,
-    backend: str,
-) -> tuple[str, list[ContainerMount]]:
-    candidate = Path(chart).expanduser()
-    if not candidate.exists():
-        return chart, []
-
-    resolved_path = candidate.resolve()
-    if backend == "container":
-        mounted_path = "/tmp/mcp-hwc-chart"
-        return mounted_path, [ContainerMount(resolved_path, mounted_path, read_only=True)]
-    return str(resolved_path), []
-
-
-def _resolve_existing_path(path: str) -> Path:
-    candidate = Path(path).expanduser().resolve()
-    if not candidate.exists():
-        raise ValueError(f"Path does not exist: {candidate}")
-    return candidate
-
-
-def _package_functiongraph_source(source_path: str) -> dict[str, object]:
-    resolved_path = _resolve_existing_path(source_path)
-    suffix = resolved_path.suffix.lower()
-
-    if resolved_path.is_file() and suffix in {".zip", ".jar"}:
-        archive_bytes = resolved_path.read_bytes()
-        code_type = "jar" if suffix == ".jar" else "zip"
-        code_filename = resolved_path.name
-    else:
-        archive_buffer = io.BytesIO()
-        with zipfile.ZipFile(archive_buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-            if resolved_path.is_dir():
-                written = False
-                for child in sorted(resolved_path.rglob("*")):
-                    if child.is_dir():
-                        continue
-                    archive.write(child, child.relative_to(resolved_path).as_posix())
-                    written = True
-                if not written:
-                    raise ValueError(f"Directory is empty: {resolved_path}")
-                code_filename = f"{resolved_path.name or 'function'}.zip"
-            else:
-                archive.write(resolved_path, resolved_path.name)
-                code_filename = f"{resolved_path.stem or resolved_path.name}.zip"
-        archive_bytes = archive_buffer.getvalue()
-        code_type = "zip"
-
-    return {
-        "source_path": str(resolved_path),
-        "code_type": code_type,
-        "code_filename": code_filename,
-        "func_code": {
-            "file": base64.b64encode(archive_bytes).decode("ascii"),
-        },
-        "archive_size_bytes": len(archive_bytes),
-    }
-
-
-def _normalize_time_ms(
-    value: str | int | None,
-    *,
-    default: datetime,
-) -> str:
-    if value is None:
-        resolved = default
-    elif isinstance(value, int):
-        if value > 10**12:
-            return str(value)
-        return str(value * 1000)
-    else:
-        text = value.strip()
-        if not text:
-            resolved = default
-        elif text.isdigit():
-            number = int(text)
-            return str(number if number > 10**12 else number * 1000)
-        else:
-            try:
-                resolved = datetime.fromisoformat(text.replace("Z", "+00:00"))
-            except ValueError as exc:
-                raise ValueError(
-                    "Time values must be epoch seconds, epoch milliseconds, or ISO-8601 strings"
-                ) from exc
-
-    if resolved.tzinfo is None:
-        resolved = resolved.replace(tzinfo=timezone.utc)
-    return str(int(resolved.timestamp() * 1000))
-
-
-def _extract_first_string(item: dict[str, object], *keys: str) -> str | None:
-    for key in keys:
-        value = item.get(key)
-        if isinstance(value, str) and value.strip():
-            return value
-    return None
-
-
-def _select_named_resource(
-    items: list[dict[str, object]],
-    *,
-    name: str | None,
-    id_keys: tuple[str, ...],
-    name_keys: tuple[str, ...],
-    label: str,
-) -> dict[str, object]:
-    if not items:
-        raise HelperToolError(f"No {label}s matched the requested criteria")
-
-    if name is None:
-        if len(items) == 1:
-            return items[0]
-        raise ValueError(
-            f"Multiple {label}s matched. Provide the {label}_name or {label}_id explicitly."
-        )
-
-    expected = name.casefold()
-    exact_matches = [
-        item
-        for item in items
-        if (_extract_first_string(item, *name_keys) or "").casefold() == expected
-    ]
-    if len(exact_matches) == 1:
-        return exact_matches[0]
-    if len(exact_matches) > 1:
-        raise HelperToolError(f"Multiple {label}s matched the exact name '{name}'")
-
-    partial_matches = [
-        item
-        for item in items
-        if expected in (_extract_first_string(item, *name_keys) or "").casefold()
-    ]
-    if len(partial_matches) == 1:
-        return partial_matches[0]
-
-    available = sorted(
-        {
-            resource_name
-            for item in items
-            if (resource_name := _extract_first_string(item, *name_keys))
-        }
-    )
-    raise HelperToolError(
-        f"Could not resolve {label} '{name}'. Available {label} names: {', '.join(available[:20])}"
-    )
-
-
-def _resolve_lts_log_group(
-    service: HuaweiCloudSdkService,
-    *,
-    log_group_id: str | None,
-    log_group_name: str | None,
-) -> dict[str, str | None]:
-    if log_group_id:
-        groups_response = service.call_operation("list_log_groups")
-        groups = groups_response["response"].get("log_groups") or []
-        for item in groups:
-            if not isinstance(item, dict):
-                continue
-            if _extract_first_string(item, "log_group_id", "id") == log_group_id:
-                return {
-                    "id": log_group_id,
-                    "name": _extract_first_string(item, "log_group_name", "name"),
-                }
-        return {"id": log_group_id, "name": log_group_name}
-
-    if not log_group_name:
-        raise ValueError("Provide log_group_id or log_group_name")
-
-    groups_response = service.call_operation("list_log_groups")
-    groups = [
-        item
-        for item in groups_response["response"].get("log_groups") or []
-        if isinstance(item, dict)
-    ]
-    selected = _select_named_resource(
-        groups,
-        name=log_group_name,
-        id_keys=("log_group_id", "id"),
-        name_keys=("log_group_name", "name"),
-        label="log group",
-    )
-    return {
-        "id": _extract_first_string(selected, "log_group_id", "id"),
-        "name": _extract_first_string(selected, "log_group_name", "name"),
-    }
-
-
-def _resolve_lts_log_stream(
-    service: HuaweiCloudSdkService,
-    *,
-    log_group_id: str,
-    log_group_name: str | None,
-    log_stream_id: str | None,
-    log_stream_name: str | None,
-) -> dict[str, str | None]:
-    if log_stream_id:
-        stream_name = log_stream_name
-        if stream_name is None:
-            streams_response = service.call_operation(
-                "list_log_stream",
-                {"log_group_id": log_group_id},
-            )
-            for item in streams_response["response"].get("log_streams") or []:
-                if not isinstance(item, dict):
-                    continue
-                if _extract_first_string(item, "log_stream_id", "id") == log_stream_id:
-                    stream_name = _extract_first_string(item, "log_stream_name", "name")
-                    break
-        return {"id": log_stream_id, "name": stream_name}
-
-    response = None
-    if log_group_name:
-        params: dict[str, object] = {"log_group_name": log_group_name}
-        if log_stream_name:
-            params["log_stream_name"] = log_stream_name
-        response = service.call_operation("list_log_streams", params)
-    else:
-        response = service.call_operation(
-            "list_log_stream",
-            {"log_group_id": log_group_id},
-        )
-
-    streams = [
-        item
-        for item in response["response"].get("log_streams") or []
-        if isinstance(item, dict)
-    ]
-    selected = _select_named_resource(
-        streams,
-        name=log_stream_name,
-        id_keys=("log_stream_id", "id"),
-        name_keys=("log_stream_name", "name"),
-        label="log stream",
-    )
-    return {
-        "id": _extract_first_string(selected, "log_stream_id", "id"),
-        "name": _extract_first_string(selected, "log_stream_name", "name"),
-    }
-
-
-def _filter_lts_logs(
-    items: list[object],
-    *,
-    contains_text: str | None,
-    regex: str | None,
-) -> list[object]:
-    compiled_pattern = None
-    if regex:
-        try:
-            compiled_pattern = re.compile(regex, re.IGNORECASE)
-        except re.error as exc:
-            raise ValueError(f"Invalid regex: {exc}") from exc
-
-    expected_text = contains_text.casefold() if contains_text else None
-    filtered = []
-    for item in items:
-        haystack = json.dumps(item, ensure_ascii=True, sort_keys=True, default=str)
-        if expected_text and expected_text not in haystack.casefold():
-            continue
-        if compiled_pattern and compiled_pattern.search(haystack) is None:
-            continue
-        filtered.append(item)
-    return filtered
-
-
-def _looks_like_existing_resource_error(message: str) -> bool:
-    lowered = message.casefold()
-    return any(
-        token in lowered
-        for token in ("already exists", "already exist", "duplicate", "conflict", "exist")
-    )
-
-
-def _normalize_registry_host(registry: str) -> str:
-    value = registry.strip().rstrip("/")
-    if "://" in value:
-        parsed = urlparse(value)
-        value = parsed.netloc or parsed.path
-    return value.rstrip("/")
-
-
-def _decode_swr_auth(auth_token: str) -> tuple[str, str]:
-    try:
-        decoded = base64.b64decode(auth_token).decode("utf-8")
-    except Exception as exc:  # noqa: BLE001
-        raise HelperToolError("SWR returned an invalid authorization token") from exc
-
-    username, separator, password = decoded.partition(":")
-    if not separator or not username or not password:
-        raise HelperToolError("SWR authorization token did not contain username and password")
-    return username, password
-
-
-def _resolve_container_cli(preferred_cli: str | None) -> str:
-    candidates = [preferred_cli] if preferred_cli else ["docker", "podman", "nerdctl"]
-    for candidate in candidates:
-        if candidate and shutil.which(candidate):
-            return candidate
-    if preferred_cli:
-        raise HelperToolError(f"Container CLI not found: {preferred_cli}")
-    raise HelperToolError("No container CLI found. Install docker, podman, or nerdctl.")
-
-
-def _run_local_command(command: list[str], *, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
-    try:
-        result = subprocess.run(
-            command,
-            input=input_text,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-    except OSError as exc:
-        joined_command = " ".join(command)
-        raise HelperToolError(f"Failed to execute local command '{joined_command}': {exc}") from exc
-
-    if result.returncode != 0:
-        joined_command = " ".join(command)
-        stderr = result.stderr.strip() or result.stdout.strip()
-        raise HelperToolError(f"Local command failed ({joined_command}): {stderr}")
-    return result
-
-
-def _ensure_swr_namespace_and_repo(
-    service: HuaweiCloudSdkService,
-    *,
-    namespace: str,
-    repository: str,
-    create_namespace: bool,
-    create_repo: bool,
-    repo_is_public: bool,
-    repo_category: str,
-    repo_description: str | None,
-) -> None:
-    if create_namespace:
-        try:
-            service.call_operation(
-                "create_namespace",
-                {"body": {"namespace": namespace}},
-            )
-        except HuaweiCloudSdkError as exc:
-            if not _looks_like_existing_resource_error(str(exc)):
-                raise
-
-    if create_repo:
-        body: dict[str, object] = {
-            "repository": repository,
-            "is_public": repo_is_public,
-            "category": repo_category,
-        }
-        if repo_description:
-            body["description"] = repo_description
-        try:
-            service.call_operation(
-                "create_repo",
-                {
-                    "namespace": namespace,
-                    "body": body,
-                },
-            )
-        except HuaweiCloudSdkError as exc:
-            if not _looks_like_existing_resource_error(str(exc)):
-                raise
-
-
-def _generate_secret_password(prefix: str = "Mcp") -> str:
-    token = re.sub(r"[^A-Za-z0-9]", "", secrets.token_urlsafe(12))[:12]
-    return f"{prefix}{token}9!"
-
-
-def _pick_default_vpc(vpcs: list[dict[str, object]]) -> dict[str, object]:
-    if not vpcs:
-        raise HelperToolError("No VPCs are available in the selected region")
-    for candidate in vpcs:
-        if candidate.get("name") == "vpc-default":
-            return candidate
-    return vpcs[0]
-
-
-def _pick_default_subnet(subnets: list[dict[str, object]]) -> dict[str, object]:
-    if not subnets:
-        raise HelperToolError("No subnets are available in the selected VPC")
-    for candidate in subnets:
-        if candidate.get("name") == "subnet-default":
-            return candidate
-    return subnets[0]
-
-
-def _pick_sfs_availability_zone(
-    share_types: list[dict[str, object]],
-    *,
-    requested_share_type: str,
-) -> str:
-    normalized_share_type = requested_share_type.strip().lower()
-    for item in share_types:
-        if str(item.get("share_type", "")).strip().lower() != normalized_share_type:
-            continue
-        for zone in item.get("available_zones") or []:
-            if str(zone.get("status", "")).strip().lower() == "active":
-                az = zone.get("available_zone")
-                if isinstance(az, str) and az.strip():
-                    return az
-    raise HelperToolError(
-        f"No active availability zone found for SFS share type {requested_share_type}"
-    )
-
-
-def _pick_access_image(images: list[dict[str, object]]) -> dict[str, object]:
-    ranked: list[tuple[int, dict[str, object]]] = []
-    for image in images:
-        if str(image.get("status", "")).strip().lower() != "active":
-            continue
-        platform = str(image.get("__platform") or image.get("platform") or "").lower()
-        os_version = str(image.get("__os_version") or image.get("os_version") or "").lower()
-        image_id = image.get("id")
-        if not isinstance(image_id, str) or not image_id.strip():
-            continue
-        if "linux" not in str(image.get("__os_type") or image.get("os_type") or "Linux").lower():
-            continue
-
-        score = 100
-        if "ubuntu" in platform and "24.04" in os_version:
-            score = 0
-        elif "ubuntu" in platform:
-            score = 1
-        elif "openeuler" in platform or "debian" in platform or "centos" in platform:
-            score = 2
-        ranked.append((score, image))
-
-    if not ranked:
-        raise HelperToolError("No suitable public Linux image was found for the access VM")
-    ranked.sort(key=lambda item: (item[0], str(item[1].get("name") or item[1].get("id"))))
-    return ranked[0][1]
-
-
-def _normal_azs_for_flavor(flavor: dict[str, object]) -> list[str]:
-    extra_specs = flavor.get("os_extra_specs")
-    if not isinstance(extra_specs, dict):
-        return []
-    condition = extra_specs.get("cond:operation:az")
-    if not isinstance(condition, str):
-        return []
-
-    zones: list[str] = []
-    for entry in condition.split(","):
-        text = entry.strip()
-        if not text.endswith("(normal)"):
-            continue
-        zones.append(text[: -len("(normal)")])
-    return zones
-
-
-def _pick_access_vm_flavor(
-    flavors: list[dict[str, object]],
-    *,
-    preferred_az: str,
-) -> tuple[dict[str, object], str]:
-    ranked: list[tuple[int, int, str, dict[str, object], str]] = []
-    for flavor in flavors:
-        flavor_id = flavor.get("id")
-        if not isinstance(flavor_id, str) or not flavor_id.strip():
-            continue
-        if "gpus" in flavor and flavor.get("gpus"):
-            continue
-        normal_azs = _normal_azs_for_flavor(flavor)
-        if not normal_azs:
-            continue
-        vcpus = int(str(flavor.get("vcpus") or 0))
-        ram = int(flavor.get("ram") or 0)
-        selected_az = preferred_az if preferred_az in normal_azs else normal_azs[0]
-        az_penalty = 0 if selected_az == preferred_az else 1
-        ranked.append((az_penalty, vcpus, ram, flavor_id, selected_az))
-
-    if not ranked:
-        raise HelperToolError("No suitable ECS flavor was found for the access VM")
-    ranked.sort(key=lambda item: (item[0], item[1], item[2], item[3]))
-    _, _, _, flavor_id, selected_az = ranked[0]
-    return ({"id": flavor_id}, selected_az)
-
-
-def _extract_server_ips(server: dict[str, object]) -> tuple[str | None, str | None]:
-    private_ip = None
-    public_ip = None
-    addresses = server.get("addresses")
-    if not isinstance(addresses, dict):
-        return private_ip, public_ip
-
-    for network_entries in addresses.values():
-        if not isinstance(network_entries, list):
-            continue
-        for entry in network_entries:
-            if not isinstance(entry, dict):
-                continue
-            addr = entry.get("addr")
-            if not isinstance(addr, str) or not addr.strip():
-                continue
-            address_type = str(entry.get("OS-EXT-IPS:type") or "").strip().lower()
-            if address_type == "floating" and public_ip is None:
-                public_ip = addr
-            elif address_type == "fixed" and private_ip is None:
-                private_ip = addr
-    return private_ip, public_ip
-
-
-def _wait_for_service_value(
-    service: HuaweiCloudSdkService,
-    *,
-    operation: str,
-    parameters: dict[str, object] | None,
-    response_path: str,
-    expected_value: object | None = None,
-    match_mode: str = "equals",
-    timeout_seconds: int = 900,
-    interval_seconds: int = 10,
-) -> dict[str, object]:
-    deadline = time.monotonic() + timeout_seconds
-    while True:
-        result = service.call_operation(operation, parameters)
-        value = _extract_path_value(result, response_path)
-        if _wait_condition_matches(
-            value,
-            expected_value=expected_value,
-            match_mode=match_mode,
-        ):
-            return result
-        if time.monotonic() >= deadline:
-            raise HelperToolError(
-                f"Timed out waiting for {service._spec.name}.{operation} {response_path}; last value was {value!r}"
-            )
-        time.sleep(interval_seconds)
-
-
-def _mount_sfs_share_via_ssh(
-    *,
-    host: str,
-    username: str,
-    password: str,
-    export_location: str,
-    mount_path: str,
-) -> dict[str, object]:
-    ssh_service = get_ssh_service()
-    commands = [
-        "apt-get update",
-        "DEBIAN_FRONTEND=noninteractive apt-get install -y nfs-common",
-        f"mkdir -p {mount_path}",
-        f"mount -t nfs -o vers=3,timeo=600,noresvport,nolock {export_location} {mount_path}",
-        f"printf 'sfs proof %s\\n' \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\" > {mount_path}/proof.txt",
-        f"grep -q '^{re.escape(export_location)} {re.escape(mount_path)} nfs ' /etc/fstab || printf '{export_location} {mount_path} nfs vers=3,timeo=600,noresvport,nolock,_netdev 0 0\\n' >> /etc/fstab",
-        f"cat {mount_path}/proof.txt",
-        f"df -h {mount_path}",
-        f"mount | grep ' {mount_path} '",
-        f"ls -la {mount_path}",
-    ]
-
-    results: list[dict[str, object]] = []
-    for command in commands:
-        result = ssh_service.execute(
-            host=host,
-            username=username,
-            command=command,
-            password=password,
-            allow_unknown_host=True,
-            connect_timeout=20,
-            command_timeout=600,
-        )
-        if result["exit_status"] != 0:
-            raise HelperToolError(
-                f"Failed to prepare SFS mount on {username}@{host}: {result['stderr'] or result['stdout']}"
-            )
-        results.append(result)
-    return {
-        "proof_text": results[-4]["stdout"].strip(),
-        "filesystem_report": results[-3]["stdout"].strip(),
-        "mount_report": results[-2]["stdout"].strip(),
-        "directory_listing": results[-1]["stdout"].strip(),
-    }
 
 @mcp.tool()
 def obs_list_buckets() -> dict[str, object]:
@@ -1197,7 +546,7 @@ def obs_delete_bucket(
 @mcp.tool()
 def huaweicloud_list_services(query: str | None = None) -> dict[str, object]:
     """List supported Huawei Cloud services, aliases, API versions, and provisioning hints."""
-    return _run_tool_call(lambda: list_supported_services(query=query))
+    return _run_tool_call(lambda: _list_supported_services_for_mcp(query=query))
 
 
 @mcp.tool()
@@ -1315,15 +664,14 @@ def huaweicloud_wait_for_condition(
     endpoint: str | None = None,
     api_version: str | None = None,
     timeout_seconds: int = 600,
-    interval_seconds: int = 10,
+    interval_seconds: int = _DEFAULT_POLL_INTERVAL_SECONDS,
 ) -> dict[str, object]:
     """Poll a Huawei Cloud SDK operation until a response field matches a condition."""
 
     def wait_for_condition() -> dict[str, object]:
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be greater than zero")
-        if interval_seconds <= 0:
-            raise ValueError("interval_seconds must be greater than zero")
+        effective_interval = _resolve_poll_interval(interval_seconds)
 
         resolved_mode = match_mode or ("truthy" if expected_value is None else "equals")
         resolved_service = _get_resolved_sdk_service(
@@ -1380,7 +728,7 @@ def huaweicloud_wait_for_condition(
                 raise HelperToolError(
                     f"Timed out waiting for {service_name}.{operation} {response_path} with match_mode={resolved_mode}; {detail}"
                 )
-            time.sleep(interval_seconds)
+            _sleep_before_next_poll(deadline, effective_interval)
 
     return _run_tool_call(wait_for_condition)
 
@@ -1554,6 +902,53 @@ def postgres_execute_sql(
 
 
 @mcp.tool()
+def ecs_create_vm(
+    region: str,
+    name: str | None = None,
+    public_access: bool = True,
+    ssh_cidr: str | None = None,
+    admin_password: str | None = None,
+    return_password: bool = True,
+    vpc_id: str | None = None,
+    subnet_id: str | None = None,
+    security_group_id: str | None = None,
+    image_id: str | None = None,
+    image_hint: str | None = "Ubuntu",
+    flavor_id: str | None = None,
+    flavor_hint: str | None = None,
+    availability_zone: str | None = None,
+    root_volume_type: str = "GPSSD",
+    root_volume_size_gb: int = 40,
+    bandwidth_size_mbit: int = 5,
+    wait: bool = False,
+) -> dict[str, object]:
+    """Create a small ECS VM from minimal input and hide routine SDK payload details."""
+    return _run_tool_call(
+        lambda: _create_ecs_vm_workflow(
+            service_factory=_get_resolved_sdk_service,
+            region=region,
+            name=name,
+            public_access=public_access,
+            ssh_cidr=ssh_cidr,
+            admin_password=admin_password,
+            return_password=return_password,
+            vpc_id=vpc_id,
+            subnet_id=subnet_id,
+            security_group_id=security_group_id,
+            image_id=image_id,
+            image_hint=image_hint,
+            flavor_id=flavor_id,
+            flavor_hint=flavor_hint,
+            availability_zone=availability_zone,
+            root_volume_type=root_volume_type,
+            root_volume_size_gb=root_volume_size_gb,
+            bandwidth_size_mbit=bandwidth_size_mbit,
+            wait=wait,
+        )
+    )
+
+
+@mcp.tool()
 def sfs_create_accessible_share(
     region: str,
     client_cidr: str,
@@ -1568,263 +963,23 @@ def sfs_create_accessible_share(
     mount_path: str = "/mnt/sfs-demo",
 ) -> dict[str, object]:
     """Create an SFS share plus a public access VM, mount it, and return proof."""
-
-    def provision_share() -> dict[str, object]:
-        if size_gb <= 0:
-            raise ValueError("size_gb must be greater than zero")
-        if not client_cidr.strip():
-            raise ValueError("client_cidr cannot be empty")
-        if not mount_path.startswith("/"):
-            raise ValueError("mount_path must be an absolute path")
-
-        normalized_share_type = share_type.strip().upper()
-        if normalized_share_type not in {"STANDARD", "PERFORMANCE"}:
-            raise ValueError("share_type must be STANDARD or PERFORMANCE")
-
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-        resolved_share_name = share_name or f"mcphwcsfs{timestamp}"
-        resolved_vm_name = access_vm_name or f"{resolved_share_name}-client"
-        resolved_vm_password = access_vm_password or _generate_secret_password("McpSfsVm")
-
-        vpc_service = _get_resolved_sdk_service("vpc", region=region)
-        sfs_service = _get_resolved_sdk_service("sfs", region=region)
-        ims_service = _get_resolved_sdk_service("ims", region=region)
-        ecs_service = _get_resolved_sdk_service("ecs", region=region)
-
-        resolved_vpc_id = vpc_id
-        if resolved_vpc_id is None:
-            vpcs = vpc_service.call_operation("list_vpcs", {"limit": 100})["response"].get("vpcs") or []
-            resolved_vpc_id = _pick_default_vpc(vpcs)["id"]
-
-        resolved_subnet_id = subnet_id
-        if resolved_subnet_id is None:
-            subnets = vpc_service.call_operation(
-                "list_subnets",
-                {"limit": 100, "vpc_id": resolved_vpc_id},
-            )["response"].get("subnets") or []
-            resolved_subnet_id = _pick_default_subnet(subnets)["id"]
-
-        subnet = vpc_service.call_operation("show_subnet", {"subnet_id": resolved_subnet_id})["response"].get("subnet") or {}
-        subnet_cidr = subnet.get("cidr")
-        if not isinstance(subnet_cidr, str) or not subnet_cidr.strip():
-            raise HelperToolError("Could not resolve the subnet CIDR for the SFS permission rule")
-
-        resolved_availability_zone = availability_zone
-        if resolved_availability_zone is None:
-            share_types = sfs_service.call_operation(
-                "list_share_types",
-                {"limit": 100, "offset": 0},
-            )["response"].get("share_types") or []
-            resolved_availability_zone = _pick_sfs_availability_zone(
-                share_types,
-                requested_share_type=normalized_share_type,
-            )
-
-        sg_name = f"mcp-hwc-sfs-{timestamp}"
-        security_group = vpc_service.call_operation(
-            "create_security_group",
-            {"body": {"security_group": {"name": sg_name, "vpc_id": resolved_vpc_id}}},
-        )["response"].get("security_group") or {}
-        security_group_id = security_group.get("id")
-        if not isinstance(security_group_id, str) or not security_group_id.strip():
-            raise HelperToolError("Failed to create the access security group")
-
-        vpc_service.call_operation(
-            "create_security_group_rule",
-            {
-                "body": {
-                    "security_group_rule": {
-                        "security_group_id": security_group_id,
-                        "description": "SSH from client",
-                        "direction": "ingress",
-                        "ethertype": "IPv4",
-                        "protocol": "tcp",
-                        "port_range_min": 22,
-                        "port_range_max": 22,
-                        "remote_ip_prefix": client_cidr,
-                    }
-                }
-            },
-        )
-
-        share_response = sfs_service.call_operation(
-            "create_share",
-            {
-                "body": {
-                    "share": {
-                        "availability_zone": resolved_availability_zone,
-                        "description": "SFS share created by mcp-hwc",
-                        "name": resolved_share_name,
-                        "security_group_id": security_group_id,
-                        "share_proto": "NFS",
-                        "share_type": normalized_share_type,
-                        "size": size_gb,
-                        "subnet_id": resolved_subnet_id,
-                        "vpc_id": resolved_vpc_id,
-                        "tags": [
-                            {"key": "managed-by", "value": "mcp-hwc"},
-                            {"key": "purpose", "value": "sfs-demo"},
-                        ],
-                    }
-                }
-            },
-        )
-        share_id = share_response["response"].get("id")
-        if not isinstance(share_id, str) or not share_id.strip():
-            raise HelperToolError("SFS did not return a share ID")
-
-        share_result = _wait_for_service_value(
-            sfs_service,
-            operation="show_share",
-            parameters={"share_id": share_id},
-            response_path="response.status",
-            expected_value="200",
-            timeout_seconds=1200,
-            interval_seconds=10,
-        )
-        share = share_result["response"]
-        export_location = share.get("export_location")
-        if not isinstance(export_location, str) or not export_location.strip():
-            raise HelperToolError("SFS did not become mountable")
-
-        perm_rules = sfs_service.call_operation(
-            "list_perm_rules",
-            {"share_id": share_id, "limit": 100, "offset": 0},
-        )["response"].get("rules") or []
-        for rule in perm_rules:
-            if rule.get("ip_cidr") == "*":
-                rule_id = rule.get("id")
-                if isinstance(rule_id, str) and rule_id.strip():
-                    sfs_service.call_operation(
-                        "delete_perm_rule",
-                        {"share_id": share_id, "rule_id": rule_id},
-                    )
-
-        if not any(rule.get("ip_cidr") == subnet_cidr for rule in perm_rules):
-            sfs_service.call_operation(
-                "create_perm_rule",
-                {
-                    "share_id": share_id,
-                    "body": {
-                        "rules": [
-                            {
-                                "ip_cidr": subnet_cidr,
-                                "rw_type": "rw",
-                                "user_type": "no_root_squash",
-                            }
-                        ]
-                    },
-                },
-            )
-
-        images = ims_service.call_operation(
-            "list_images",
-            {"limit": 100, "visibility": "public", "os_type": "Linux"},
-        )["response"].get("images") or []
-        image = _pick_access_image(images)
-
-        flavors = ecs_service.call_operation("list_flavors", {"limit": 200})["response"].get("flavors") or []
-        flavor, vm_az = _pick_access_vm_flavor(flavors, preferred_az=resolved_availability_zone)
-
-        create_vm = ecs_service.call_operation(
-            "create_servers",
-            {
-                "x_client_token": str(uuid.uuid4()),
-                "body": {
-                    "server": {
-                        "imageRef": image["id"],
-                        "flavorRef": flavor["id"],
-                        "name": resolved_vm_name,
-                        "adminPass": resolved_vm_password,
-                        "vpcid": resolved_vpc_id,
-                        "nics": [{"subnet_id": resolved_subnet_id}],
-                        "publicip": {
-                            "eip": {
-                                "iptype": "5_bgp",
-                                "bandwidth": {
-                                    "size": 5,
-                                    "sharetype": "PER",
-                                    "chargemode": "traffic",
-                                },
-                            },
-                            "delete_on_termination": True,
-                        },
-                        "count": 1,
-                        "root_volume": {"volumetype": "GPSSD", "size": 40},
-                        "security_groups": [{"id": security_group_id}],
-                        "availability_zone": vm_az,
-                        "extendparam": {
-                            "chargingMode": "postPaid",
-                            "regionID": region,
-                            "isAutoPay": "true",
-                        },
-                    }
-                },
-            },
-        )
-        job_id = create_vm["response"].get("job_id")
-        if not isinstance(job_id, str) or not job_id.strip():
-            raise HelperToolError("ECS did not return a create job ID")
-
-        _wait_for_service_value(
-            ecs_service,
-            operation="show_job",
-            parameters={"job_id": job_id},
-            response_path="response.status",
-            expected_value="SUCCESS",
-            timeout_seconds=1200,
-            interval_seconds=10,
-        )
-
-        servers = ecs_service.call_operation(
-            "list_servers_details",
-            {"name": resolved_vm_name},
-        )["response"].get("servers") or []
-        if not servers:
-            raise HelperToolError("Could not locate the access VM after creation")
-        server = servers[0]
-        private_ip, public_ip = _extract_server_ips(server)
-        if not public_ip:
-            raise HelperToolError("Access VM did not receive a public IP")
-
-        mount_result = _mount_sfs_share_via_ssh(
-            host=public_ip,
-            username="root",
-            password=resolved_vm_password,
-            export_location=export_location,
+    return _run_tool_call(
+        lambda: _create_accessible_sfs_share_workflow(
+            service_factory=_get_resolved_sdk_service,
+            ssh_service=get_ssh_service(),
+            region=region,
+            client_cidr=client_cidr,
+            share_name=share_name,
+            size_gb=size_gb,
+            share_type=share_type,
+            vpc_id=vpc_id,
+            subnet_id=subnet_id,
+            availability_zone=availability_zone,
+            access_vm_name=access_vm_name,
+            access_vm_password=access_vm_password,
             mount_path=mount_path,
         )
-
-        return {
-            "region": region,
-            "share": {
-                "id": share_id,
-                "name": share.get("name") or resolved_share_name,
-                "availability_zone": resolved_availability_zone,
-                "size_gb": size_gb,
-                "share_type": normalized_share_type,
-                "export_location": export_location,
-                "endpoint": share.get("optional_endpoint"),
-                "security_group_id": security_group_id,
-                "allowed_mount_cidr": subnet_cidr,
-            },
-            "access_vm": {
-                "id": server.get("id"),
-                "name": server.get("name") or resolved_vm_name,
-                "availability_zone": vm_az,
-                "image_id": image["id"],
-                "flavor_id": flavor["id"],
-                "private_ip": private_ip,
-                "public_ip": public_ip,
-                "username": "root",
-                "password": resolved_vm_password,
-                "mount_path": mount_path,
-                "ssh_allowed_cidr": client_cidr,
-            },
-            "proof": mount_result,
-        }
-
-    return _run_tool_call(provision_share)
+    )
 
 
 @mcp.tool()
@@ -2445,112 +1600,34 @@ def lts_query_logs(
     api_version: str | None = None,
 ) -> dict[str, object]:
     """Resolve LTS log groups or streams by name and query filtered logs."""
-
-    def query_logs() -> dict[str, object]:
-        if not 1 <= limit <= 500:
-            raise ValueError("limit must be between 1 and 500")
-        if analysis_query and not query:
-            raise ValueError("query is required when analysis_query is true")
-
-        service = _get_resolved_sdk_service(
-            "lts",
-            api_version=api_version,
-            region=region,
-            project_id=project_id,
-            endpoint=endpoint,
-        )
-
-        now = datetime.now(timezone.utc)
-        start_time_ms = _normalize_time_ms(
-            start_time,
-            default=now - timedelta(hours=1),
-        )
-        end_time_ms = _normalize_time_ms(end_time, default=now)
-
-        log_group = _resolve_lts_log_group(
-            service,
+    return _run_tool_call(
+        lambda: query_lts_logs(
+            _get_resolved_sdk_service(
+                "lts",
+                api_version=api_version,
+                region=region,
+                project_id=project_id,
+                endpoint=endpoint,
+            ),
             log_group_id=log_group_id,
             log_group_name=log_group_name,
-        )
-        if log_group["id"] is None:
-            raise HelperToolError("Could not resolve an LTS log group ID")
-
-        log_stream = _resolve_lts_log_stream(
-            service,
-            log_group_id=log_group["id"],
-            log_group_name=log_group["name"],
             log_stream_id=log_stream_id,
             log_stream_name=log_stream_name,
-        )
-        if log_stream["id"] is None:
-            raise HelperToolError("Could not resolve an LTS log stream ID")
-
-        if sql_expression:
-            result = service.call_operation(
-                "list_query_structured_logs",
-                {
-                    "log_group_id": log_group["id"],
-                    "log_stream_id": log_stream["id"],
-                    "body": {
-                        "start_time": start_time_ms,
-                        "end_time": end_time_ms,
-                        "sql_expression": sql_expression,
-                        "original_content": original_content,
-                    },
-                },
-            )
-        else:
-            body: dict[str, object] = {
-                "start_time": start_time_ms,
-                "end_time": end_time_ms,
-                "limit": limit,
-                "is_desc": is_desc,
-                "highlight": highlight,
-            }
-            if labels:
-                body["labels"] = labels
-            if keywords:
-                body["keywords"] = keywords
-            if query:
-                body["query"] = query
-                body["is_analysis_query"] = analysis_query
-
-            result = service.call_operation(
-                "list_logs",
-                {
-                    "log_group_id": log_group["id"],
-                    "log_stream_id": log_stream["id"],
-                    "body": body,
-                },
-            )
-
-        response = result["response"]
-        raw_logs = response.get("struct_logs")
-        if raw_logs is None:
-            raw_logs = response.get("logs")
-        if raw_logs is None:
-            raw_logs = response.get("analysis_logs")
-        raw_logs = raw_logs or []
-        filtered_logs = _filter_lts_logs(
-            raw_logs,
+            start_time=start_time,
+            end_time=end_time,
+            keywords=keywords,
+            labels=labels,
+            query=query,
+            analysis_query=analysis_query,
+            sql_expression=sql_expression,
+            limit=limit,
+            is_desc=is_desc,
+            highlight=highlight,
+            original_content=original_content,
             contains_text=contains_text,
             regex=regex,
         )
-
-        result["log_group_id"] = log_group["id"]
-        result["log_group_name"] = log_group["name"]
-        result["log_stream_id"] = log_stream["id"]
-        result["log_stream_name"] = log_stream["name"]
-        result["query_window"] = {
-            "start_time": start_time_ms,
-            "end_time": end_time_ms,
-        }
-        result["raw_count"] = len(raw_logs)
-        result["matched_count"] = len(filtered_logs)
-        result["logs"] = filtered_logs
-        return result
-
-    return _run_tool_call(query_logs)
+    )
 
 
 @mcp.tool()
@@ -2572,77 +1649,29 @@ def swr_upload_image(
     api_version: str | None = None,
 ) -> dict[str, object]:
     """Create SWR auth, optionally create namespace or repo, and push a local image."""
-
-    def upload_image() -> dict[str, object]:
-        resolved_cli = _resolve_container_cli(container_cli)
-        service = _get_resolved_sdk_service(
-            "swr",
-            api_version=api_version,
-            region=region,
-            project_id=project_id,
-            endpoint=endpoint,
-        )
-
-        _ensure_swr_namespace_and_repo(
-            service,
+    return _run_tool_call(
+        lambda: upload_swr_image(
+            _get_resolved_sdk_service(
+                "swr",
+                api_version=api_version,
+                region=region,
+                project_id=project_id,
+                endpoint=endpoint,
+            ),
+            source_image=source_image,
             namespace=namespace,
             repository=repository,
+            tag=tag,
+            registry=registry,
+            container_cli=container_cli,
             create_namespace=create_namespace,
             create_repo=create_repo,
             repo_is_public=repo_is_public,
             repo_category=repo_category,
             repo_description=repo_description,
+            region=region,
         )
-
-        token_result = service.call_operation("create_authorization_token")
-        token_response = token_result["response"]
-        auths = token_response.get("auths") or {}
-        if not isinstance(auths, dict) or not auths:
-            raise HelperToolError("SWR did not return any registry authorization entries")
-
-        requested_registry = registry.strip() if registry else next(iter(auths))
-        registry_host = _normalize_registry_host(requested_registry)
-        auth_entry = None
-        for auth_registry, value in auths.items():
-            if _normalize_registry_host(str(auth_registry)) == registry_host:
-                auth_entry = value
-                break
-        if not isinstance(auth_entry, dict):
-            raise HelperToolError(
-                f"SWR did not return credentials for registry '{registry_host}'"
-            )
-
-        encoded_auth = auth_entry.get("auth")
-        if not isinstance(encoded_auth, str) or not encoded_auth:
-            raise HelperToolError("SWR authorization entry did not include a usable auth token")
-        username, password = _decode_swr_auth(encoded_auth)
-
-        target_image = f"{registry_host}/{namespace}/{repository}:{tag}"
-        login_result = _run_local_command(
-            [resolved_cli, "login", "--username", username, "--password-stdin", registry_host],
-            input_text=password,
-        )
-        _run_local_command([resolved_cli, "tag", source_image, target_image])
-        push_result = _run_local_command([resolved_cli, "push", target_image])
-
-        return {
-            "service": "swr",
-            "operation": "upload_image",
-            "region": region,
-            "container_cli": resolved_cli,
-            "registry": registry_host,
-            "namespace": namespace,
-            "repository": repository,
-            "tag": tag,
-            "source_image": source_image,
-            "target_image": target_image,
-            "authorization_expires_at": token_response.get("x_swr_expireat"),
-            "login_stdout": login_result.stdout,
-            "push_stdout": push_result.stdout,
-            "pushed": True,
-        }
-
-    return _run_tool_call(upload_image)
+    )
 
 
 @mcp.tool()
@@ -2732,11 +1761,8 @@ def ssh_download_file(
 def _register_sdk_tools(service_name: str) -> None:
     spec = SERVICE_SPECS[service_name]
     getter_name = f"get_{service_name}_service"
+    expose_tools = _generated_service_tool_enabled(service_name)
 
-    @mcp.tool(
-        name=f"{service_name}_list_operations",
-        description=f"List {spec.display_name} operations exposed by the Huawei Cloud Python SDK.",
-    )
     def list_operations(
         query: str | None = None,
         limit: int = 100,
@@ -2753,12 +1779,13 @@ def _register_sdk_tools(service_name: str) -> None:
         )
 
     list_operations.__name__ = f"{service_name}_list_operations"
+    if expose_tools:
+        list_operations = mcp.tool(
+            name=f"{service_name}_list_operations",
+            description=f"List {spec.display_name} operations exposed by the Huawei Cloud Python SDK.",
+        )(list_operations)
     globals()[list_operations.__name__] = list_operations
 
-    @mcp.tool(
-        name=f"{service_name}_describe_operation",
-        description=f"Describe the request schema for a {spec.display_name} operation.",
-    )
     def describe_operation(
         operation: str,
         api_version: str | None = None,
@@ -2773,15 +1800,13 @@ def _register_sdk_tools(service_name: str) -> None:
         )
 
     describe_operation.__name__ = f"{service_name}_describe_operation"
+    if expose_tools:
+        describe_operation = mcp.tool(
+            name=f"{service_name}_describe_operation",
+            description=f"Describe the request schema for a {spec.display_name} operation.",
+        )(describe_operation)
     globals()[describe_operation.__name__] = describe_operation
 
-    @mcp.tool(
-        name=f"{service_name}_call_operation",
-        description=(
-            f"Execute any {spec.display_name} SDK operation with a structured request payload. "
-            "Use `api_version` when the service publishes multiple SDK surfaces."
-        ),
-    )
     def call_operation(
         operation: str,
         parameters: dict[str, object] | None = None,
@@ -2806,11 +1831,157 @@ def _register_sdk_tools(service_name: str) -> None:
         )
 
     call_operation.__name__ = f"{service_name}_call_operation"
+    if expose_tools:
+        call_operation = mcp.tool(
+            name=f"{service_name}_call_operation",
+            description=(
+                f"Execute any {spec.display_name} SDK operation with a structured request payload. "
+                "Use `api_version` when the service publishes multiple SDK surfaces."
+            ),
+        )(call_operation)
     globals()[call_operation.__name__] = call_operation
 
 
 for _service_name in SERVICE_SPECS:
     _register_sdk_tools(_service_name)
+
+
+def _web_fallback_quote(descs: list[ResourceDescriptor]) -> QuoteResult:
+    web = WebPricingBackend(headless=True)
+    return web.quote(descs)
+
+
+@mcp.tool()
+def price_quote(
+    resources: list[dict[str, object]],
+    region: str | None = None,
+) -> dict[str, object]:
+    """Get pricing/quotation for Huawei Cloud resources. Each resource dict needs: service, spec, region, period_type. Optional: period_num, quantity."""
+
+    def quote() -> dict[str, object]:
+        descs = []
+        for r in resources:
+            r_region = str(r.get("region", "") or region or "")
+            if not r_region:
+                raise ValueError("region is required (per-resource or top-level)")
+            descs.append(ResourceDescriptor(
+                service=str(r["service"]),
+                spec=str(r["spec"]),
+                region=r_region,
+                period_type=str(r["period_type"]),
+                period_num=int(r.get("period_num", 1)),
+                quantity=int(r.get("quantity", 1)),
+            ))
+
+        backend = get_bss_pricing_backend()
+        try:
+            result = backend.quote(descs)
+        except BssAccessDenied:
+            result = _web_fallback_quote(descs)
+        except PricingNotAvailable:
+            result = _web_fallback_quote(descs)
+
+        get_quote_store().save(result)
+        return {
+            "text": format_text(result),
+            **result.to_dict(),
+        }
+
+    return _run_tool_call(quote)
+
+
+@mcp.tool()
+def price_discover(
+    service: str,
+    region: str | None = None,
+    keyword: str | None = None,
+) -> dict[str, object]:
+    """Discover available resource types and specs for a Huawei Cloud service."""
+
+    def discover() -> dict[str, object]:
+        backend = get_bss_pricing_backend()
+        specs = backend.discover_specs(service, region=region, keyword=keyword)
+        return {
+            "service": service,
+            "region": region,
+            "specs": specs,
+            "count": len(specs),
+        }
+
+    return _run_tool_call(discover)
+
+
+@mcp.tool()
+def price_export(
+    quote_id: str,
+    format: str = "json",
+) -> dict[str, object]:
+    """Export a saved quote in json, csv, or terraform format."""
+
+    def export() -> dict[str, object]:
+        store = get_quote_store()
+        result = store.get(uuid.UUID(quote_id))
+        if format == "csv":
+            content = export_csv(result)
+        elif format == "terraform":
+            content = export_terraform(result)
+        else:
+            content = export_json(result)
+        return {
+            "quote_id": quote_id,
+            "format": format,
+            "content": content,
+        }
+
+    return _run_tool_call(export)
+
+
+@mcp.tool()
+def price_list_quotes(
+    limit: int = 20,
+    service: str | None = None,
+) -> dict[str, object]:
+    """List saved pricing quotes."""
+
+    def list_quotes() -> dict[str, object]:
+        store = get_quote_store()
+        return {"quotes": store.list_quotes(limit=limit, service=service)}
+
+    return _run_tool_call(list_quotes)
+
+
+@mcp.tool()
+def price_get_quote(quote_id: str) -> dict[str, object]:
+    """Retrieve a specific saved quote by ID."""
+
+    def get_quote() -> dict[str, object]:
+        store = get_quote_store()
+        result = store.get(uuid.UUID(quote_id))
+        return {
+            "text": format_text(result),
+            **result.to_dict(),
+        }
+
+    return _run_tool_call(get_quote)
+
+
+@mcp.tool()
+def price_share(quote_id: str) -> dict[str, object]:
+    """Generate a shareable URL for a quote on the HWC price calculator. Requires Playwright and an active HWC browser session."""
+
+    def share() -> dict[str, object]:
+        store = get_quote_store()
+        result = store.get(uuid.UUID(quote_id))
+        calculator_url = "https://www.huaweicloud.com/pricing.html"
+        return {
+            "quote_id": quote_id,
+            "share_url": calculator_url,
+            "method": "direct_link",
+            "note": "Pre-filled calculator URL generation requires Playwright automation with an active HWC session. For now, this returns the calculator landing page.",
+            "services": [item.service for item in result.items],
+        }
+
+    return _run_tool_call(share)
 
 
 def main() -> None:

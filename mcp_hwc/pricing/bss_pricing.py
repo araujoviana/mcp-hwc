@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
@@ -15,42 +16,49 @@ from huaweicloudsdkbss.v2.model import (
 )
 from huaweicloudsdkcore.region.region import Region as SdkRegion
 
-from .catalog import resolve_cloud_service_type, resolve_region
+from .catalog import resolve_cloud_service_type, resolve_region, resolve_resource_type
 from .models import QuoteItem, QuoteResult, ResourceDescriptor
 
 if TYPE_CHECKING:
     from mcp_hwc.config import CloudApiConfig
+
+log = logging.getLogger(__name__)
 
 
 class PricingNotAvailable(RuntimeError):
     """Raised when BSS SDK cannot price a resource (triggers Playwright fallback)."""
 
 
+class BssAccessDenied(PricingNotAvailable):
+    """Raised when BSS API returns 403 — account lacks BSS access."""
+
+
 class BssPricingBackend:
     def __init__(self, config: CloudApiConfig) -> None:
         self._config = config
+        self._client: BssClient | None = None
+
+    def _get_client(self) -> BssClient:
+        if self._client is not None:
+            return self._client
         self._client = self._build_client()
+        return self._client
 
     def _build_client(self) -> BssClient:
-        from huaweicloudsdkcore.auth.credentials import BasicCredentials
+        from huaweicloudsdkcore.auth.credentials import GlobalCredentials
 
-        creds = BasicCredentials(
+        creds = GlobalCredentials(
             ak=self._config.access_key_id,
             sk=self._config.secret_access_key,
         )
         if self._config.security_token:
             creds.security_token = self._config.security_token
-        if self._config.project_id:
-            creds.project_id = self._config.project_id
         if self._config.domain_id:
             creds.domain_id = self._config.domain_id
 
         region = self._config.region or "myhuaweicloud.com"
         endpoint = self._config.endpoint or "bss.myhuaweicloud.com"
-        sdk_region = SdkRegion(
-            region_id=region,
-            endpoints=[endpoint],
-        )
+        sdk_region = SdkRegion(id=region, endpoint=endpoint)
 
         return BssClient.new_builder().with_credentials(creds).with_region(sdk_region).build()
 
@@ -86,7 +94,7 @@ class BssPricingBackend:
         body = RateOnPeriodReq(project_id=project_id, product_infos=product_infos)
         request = ListRateOnPeriodDetailRequest(body=body)
 
-        response = self._client.list_rate_on_period_detail(request)
+        response = self._call_api(self._get_client().list_rate_on_period_detail, request)
 
         if response.status_code >= 400:
             raise PricingNotAvailable(
@@ -133,7 +141,7 @@ class BssPricingBackend:
         )
         request = ListOnDemandResourceRatingsRequest(body=body)
 
-        response = self._client.list_on_demand_resource_ratings(request)
+        response = self._call_api(self._get_client().list_on_demand_resource_ratings, request)
 
         if response.status_code >= 400:
             raise PricingNotAvailable(
@@ -181,7 +189,7 @@ class BssPricingBackend:
         return PeriodProductInfo(
             id=str(index),
             cloud_service_type=resolve_cloud_service_type(desc.service),
-            resource_type=resolve_cloud_service_type(desc.service),
+            resource_type=resolve_resource_type(desc.service),
             resource_spec=desc.spec,
             region=resolve_region(desc.region),
             period_type=BssPricingBackend._map_period_type(desc.period_type),
@@ -194,7 +202,7 @@ class BssPricingBackend:
         return DemandProductInfo(
             id=str(index),
             cloud_service_type=resolve_cloud_service_type(desc.service),
-            resource_type=resolve_cloud_service_type(desc.service),
+            resource_type=resolve_resource_type(desc.service),
             resource_spec=desc.spec,
             region=resolve_region(desc.region),
             usage_value=1.0,
@@ -216,7 +224,7 @@ class BssPricingBackend:
             limit=100,
             offset=0,
         )
-        response = self._client.list_service_resources(request)
+        response = self._call_api(self._get_client().list_service_resources, request)
 
         resources = []
         for item in response.service_resources or []:
@@ -231,3 +239,17 @@ class BssPricingBackend:
             resources.append(entry)
 
         return resources
+
+    @staticmethod
+    def _call_api(fn, request):
+        try:
+            return fn(request)
+        except Exception as exc:
+            msg = str(exc)
+            if "CBC.0156" in msg or "403" in msg:
+                raise BssAccessDenied(
+                    "BSS API access denied (CBC.0156). "
+                    "This account may not have BSS pricing API enabled. "
+                    "Falling back to web pricing."
+                ) from exc
+            raise PricingNotAvailable(f"BSS API error: {msg}") from exc

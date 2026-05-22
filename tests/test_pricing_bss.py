@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from mcp_hwc.pricing.bss_pricing import BssPricingBackend, PricingNotAvailable
+from mcp_hwc.pricing.bss_pricing import BssAccessDenied, BssPricingBackend, PricingNotAvailable
 from mcp_hwc.pricing.models import ResourceDescriptor
 
 
@@ -32,7 +32,7 @@ def test_build_period_product_info() -> None:
     )
     info = backend._build_period_product_info(desc, index=0)
     assert info.id == "0"
-    assert info.cloud_service_type == "hws.resource.type.ec2"
+    assert info.cloud_service_type == "hws.service.type.ec2"
     assert info.resource_type == "hws.resource.type.ec2"
     assert info.resource_spec == "c6.large.2"
     assert info.region == "sa-brazil-1"
@@ -52,6 +52,19 @@ def test_build_demand_product_info() -> None:
     )
     info = backend._build_demand_product_info(desc, index=0)
     assert info.id == "0"
-    assert info.cloud_service_type == "hws.resource.type.ec2"
+    assert info.cloud_service_type == "hws.service.type.ec2"
+    assert info.resource_type == "hws.resource.type.ec2"
     assert info.usage_value == 1.0
     assert info.usage_measure_id == 1
+
+
+def test_call_api_raises_bss_access_denied_on_403() -> None:
+    exc = Exception("CBC.0156 Access denied")
+    with pytest.raises(BssAccessDenied):
+        BssPricingBackend._call_api(lambda req: (_ for _ in ()).throw(exc), None)
+
+
+def test_call_api_raises_pricing_not_available_on_other_error() -> None:
+    exc = Exception("Some other error")
+    with pytest.raises(PricingNotAvailable):
+        BssPricingBackend._call_api(lambda req: (_ for _ in ()).throw(exc), None)
