@@ -40,6 +40,7 @@ _COMMON_DEFAULTS: dict[str, Any] = {
 _SERVICE_DEFAULTS: dict[str, dict[str, Any]] = {
     "ecs": {
         "deployment_style": "vm",
+        "workflow_tool": "ecs_create_vm",
         "defaults": {
             "image_preferences": ["Debian", "Ubuntu", "Huawei Cloud EulerOS"],
             "flavor_policy": {
@@ -166,7 +167,7 @@ def resolve_service_defaults(
     defaults = dict(profile.get("defaults", {}))
     if resolved_spec.name in {"ecs", "cce", "functiongraph"}:
         defaults["exposure"] = exposure
-    if resolved_spec.name in {"ecs", "rds", "css", "dcs"}:
+    if exposure != "auto" and resolved_spec.name in {"ecs", "rds", "css", "dcs"}:
         defaults["public_access"] = exposure == "public"
     if resolved_spec.name == "cce":
         defaults["public_api"] = exposure == "public"
@@ -179,6 +180,12 @@ def resolve_service_defaults(
         "intent": intent,
         "exposure": exposure,
         "deployment_style": profile.get("deployment_style", "generic"),
+        "workflow_tool": profile.get("workflow_tool"),
+        "minimal_tool_input": _minimal_tool_input(
+            resolved_spec.name,
+            region=normalized_region,
+            exposure=exposure,
+        ),
         "resource_reuse": profile["resource_reuse"],
         "network_profile": profile["network_profile"],
         "cost_policy": profile["cost_policy"],
@@ -189,8 +196,8 @@ def resolve_service_defaults(
     }
 
     notes = [
-        "These are opinionated least-input defaults intended for future orchestration helpers.",
-        "The generic SDK tools remain the source of truth for exact API payload fields and resource capabilities.",
+        "Prefer the workflow_tool and minimal_tool_input when present; use generic SDK tools only for uncommon operations.",
+        "The generic SDK tools remain available for exact API payload fields and advanced resource capabilities.",
     ]
     if normalized_region:
         notes.append(
@@ -198,6 +205,24 @@ def resolve_service_defaults(
         )
     result["notes"] = notes
     return result
+
+
+def _minimal_tool_input(
+    service_name: str,
+    *,
+    region: str | None,
+    exposure: str,
+) -> dict[str, object] | None:
+    if service_name == "ecs":
+        payload: dict[str, object] = {
+            "region": region or "<region>",
+            "public_access": exposure != "private",
+            "wait": False,
+        }
+        if exposure == "public":
+            payload["ssh_cidr"] = "<your-ip>/32"
+        return payload
+    return None
 
 
 def _apply_intent_overrides(defaults: dict[str, Any], *, intent: str) -> dict[str, Any]:

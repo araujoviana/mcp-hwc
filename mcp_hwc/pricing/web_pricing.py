@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -41,20 +42,20 @@ class WebPricingBackend:
     def __init__(self, headless: bool = True) -> None:
         self._headless = headless
 
-    def quote(self, resources: list[ResourceDescriptor]) -> QuoteResult:
-        from playwright.sync_api import sync_playwright
+    async def quote(self, resources: list[ResourceDescriptor]) -> QuoteResult:
+        from playwright.async_api import async_playwright
 
         items: list[QuoteItem] = []
-        with sync_playwright() as pw:
-            browser = pw.chromium.launch(headless=self._headless)
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=self._headless)
             for desc in resources:
                 try:
-                    item = self._quote_single(browser, desc)
+                    item = await self._quote_single(browser, desc)
                     if item is not None:
                         items.append(item)
                 except Exception as exc:
                     log.warning("Web pricing failed for %s/%s: %s", desc.service, desc.spec, exc)
-            browser.close()
+            await browser.close()
 
         if not items:
             raise RuntimeError(
@@ -68,30 +69,30 @@ class WebPricingBackend:
             created_at=datetime.now(timezone.utc),
         )
 
-    def _quote_single(self, browser, desc: ResourceDescriptor) -> QuoteItem | None:
-        page = browser.new_page()
+    async def _quote_single(self, browser, desc: ResourceDescriptor) -> QuoteItem | None:
+        page = await browser.new_page()
         try:
-            return self._scrape_calculator(page, desc)
+            return await self._scrape_calculator(page, desc)
         finally:
-            page.close()
+            await page.close()
 
-    def _scrape_calculator(self, page, desc: ResourceDescriptor) -> QuoteItem | None:
+    async def _scrape_calculator(self, page, desc: ResourceDescriptor) -> QuoteItem | None:
         service_hash = SERVICE_HASH_MAP.get(desc.service)
         if service_hash is None:
             log.warning("No calculator route for service '%s'", desc.service)
             return None
 
         url = f"{CALCULATOR_BASE}#/{service_hash}"
-        page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        page.wait_for_timeout(3000)
+        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        await page.wait_for_timeout(3000)
 
-        self._dismiss_dialogs(page)
-        self._select_region(page, desc.region)
-        self._select_billing_mode(page, desc.period_type)
-        self._select_spec(page, desc.spec)
-        page.wait_for_timeout(2000)
+        await self._dismiss_dialogs(page)
+        await self._select_region(page, desc.region)
+        await self._select_billing_mode(page, desc.period_type)
+        await self._select_spec(page, desc.spec)
+        await page.wait_for_timeout(2000)
 
-        price = self._read_price(page)
+        price = await self._read_price(page)
         if price is None:
             log.warning("Could not read price for %s/%s", desc.service, desc.spec)
             return None
@@ -108,7 +109,7 @@ class WebPricingBackend:
         )
 
     @staticmethod
-    def _dismiss_dialogs(page) -> None:
+    async def _dismiss_dialogs(page) -> None:
         for selector in [
             ".tiny-dialog-box__close",
             ".guide-dialog .close",
@@ -116,52 +117,52 @@ class WebPricingBackend:
             ".func-guide-close",
         ]:
             try:
-                close_btn = page.query_selector(selector)
+                close_btn = await page.query_selector(selector)
                 if close_btn:
-                    close_btn.click(force=True)
-                    page.wait_for_timeout(300)
+                    await close_btn.click(force=True)
+                    await page.wait_for_timeout(300)
             except Exception:
                 pass
 
     @staticmethod
-    def _select_region(page, region: str) -> None:
+    async def _select_region(page, region: str) -> None:
         region_label = _region_label(region)
         try:
-            region_trigger = page.query_selector(
+            region_trigger = await page.query_selector(
                 ".func-region-select, "
                 "[class*='region'] .func-select-input, "
                 ".calculator-region select"
             )
             if region_trigger:
-                region_trigger.click()
-                page.wait_for_timeout(500)
-                option = page.query_selector(f"text={region_label}")
+                await region_trigger.click()
+                await page.wait_for_timeout(500)
+                option = await page.query_selector(f"text={region_label}")
                 if option:
-                    option.click()
-                    page.wait_for_timeout(500)
+                    await option.click()
+                    await page.wait_for_timeout(500)
                     return
         except Exception as exc:
             log.debug("Region selector approach 1 failed: %s", exc)
 
         try:
-            inputs = page.query_selector_all(
+            inputs = await page.query_selector_all(
                 "input[placeholder='Select'], "
                 "input[placeholder*='Region']"
             )
             for inp in inputs:
-                inp.click()
-                page.wait_for_timeout(500)
-                option = page.query_selector(f"text={region_label}")
+                await inp.click()
+                await page.wait_for_timeout(500)
+                option = await page.query_selector(f"text={region_label}")
                 if option:
-                    option.click()
-                    page.wait_for_timeout(500)
+                    await option.click()
+                    await page.wait_for_timeout(500)
                     return
-                inp.press("Escape")
+                await inp.press("Escape")
         except Exception as exc:
             log.debug("Region selector approach 2 failed: %s", exc)
 
     @staticmethod
-    def _select_billing_mode(page, period_type: str) -> None:
+    async def _select_billing_mode(page, period_type: str) -> None:
         if period_type == "on_demand":
             label = "Pay-per-use"
         elif period_type == "year":
@@ -170,35 +171,35 @@ class WebPricingBackend:
             label = "Yearly/Monthly"
 
         try:
-            billing_radio = page.query_selector(f"text={label}")
+            billing_radio = await page.query_selector(f"text={label}")
             if billing_radio:
-                billing_radio.click(force=True)
-                page.wait_for_timeout(500)
+                await billing_radio.click(force=True)
+                await page.wait_for_timeout(500)
         except Exception as exc:
             log.debug("Billing mode selection failed: %s", exc)
 
     @staticmethod
-    def _select_spec(page, spec: str) -> None:
+    async def _select_spec(page, spec: str) -> None:
         try:
-            spec_input = page.query_selector(
+            spec_input = await page.query_selector(
                 "input[placeholder*='spec'], "
                 "input[placeholder*='flavor']"
             )
             if spec_input:
-                spec_input.fill(spec)
-                spec_input.press("Enter")
-                page.wait_for_timeout(500)
+                await spec_input.fill(spec)
+                await spec_input.press("Enter")
+                await page.wait_for_timeout(500)
                 return
 
-            spec_link = page.query_selector(f"text={spec}")
+            spec_link = await page.query_selector(f"text={spec}")
             if spec_link:
-                spec_link.click()
-                page.wait_for_timeout(500)
+                await spec_link.click()
+                await page.wait_for_timeout(500)
         except Exception as exc:
             log.debug("Spec selection failed: %s", exc)
 
     @staticmethod
-    def _read_price(page) -> float | None:
+    async def _read_price(page) -> float | None:
         price_selectors = [
             ".func-priceboard-priceinfo",
             ".func-priceboard-sub-priceinfo",
@@ -207,9 +208,9 @@ class WebPricingBackend:
         ]
         for selector in price_selectors:
             try:
-                el = page.query_selector(selector)
+                el = await page.query_selector(selector)
                 if el:
-                    text = (el.inner_text() or "").strip()
+                    text = (await el.inner_text() or "").strip()
                     price = _extract_price(text)
                     if price is not None:
                         return price

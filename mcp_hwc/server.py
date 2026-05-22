@@ -84,7 +84,7 @@ from .pricing.bss_pricing import BssAccessDenied, BssPricingBackend, PricingNotA
 from .pricing.catalog import resolve_region as _pricing_resolve_region
 from .pricing.persistence import QuoteStore
 from .pricing.tools import export_csv, export_json, export_terraform, format_text
-from .pricing.web_pricing import WebPricingBackend
+from .pricing.web_pricing import SERVICE_HASH_MAP, WebPricingBackend
 from .workflows.ecs import create_ecs_vm as _create_ecs_vm_workflow
 from .workflows.sfs import create_accessible_share as _create_accessible_sfs_share_workflow
 
@@ -1846,69 +1846,74 @@ for _service_name in SERVICE_SPECS:
     _register_sdk_tools(_service_name)
 
 
-def _web_fallback_quote(descs: list[ResourceDescriptor]) -> QuoteResult:
+async def _web_fallback_quote(descs: list[ResourceDescriptor]) -> QuoteResult:
     web = WebPricingBackend(headless=True)
-    return web.quote(descs)
+    return await web.quote(descs)
 
 
 @mcp.tool()
-def price_quote(
+async def price_quote(
     resources: list[dict[str, object]],
     region: str | None = None,
 ) -> dict[str, object]:
     """Get pricing/quotation for Huawei Cloud resources. Each resource dict needs: service, spec, region, period_type. Optional: period_num, quantity."""
 
-    def quote() -> dict[str, object]:
-        descs = []
-        for r in resources:
-            r_region = str(r.get("region", "") or region or "")
-            if not r_region:
-                raise ValueError("region is required (per-resource or top-level)")
-            descs.append(ResourceDescriptor(
-                service=str(r["service"]),
-                spec=str(r["spec"]),
-                region=r_region,
-                period_type=str(r["period_type"]),
-                period_num=int(r.get("period_num", 1)),
-                quantity=int(r.get("quantity", 1)),
-            ))
+    descs = []
+    for r in resources:
+        r_region = str(r.get("region", "") or region or "")
+        if not r_region:
+            raise ToolError("region is required (per-resource or top-level)")
+        descs.append(ResourceDescriptor(
+            service=str(r["service"]),
+            spec=str(r["spec"]),
+            region=r_region,
+            period_type=str(r["period_type"]),
+            period_num=int(r.get("period_num", 1)),
+            quantity=int(r.get("quantity", 1)),
+        ))
 
-        backend = get_bss_pricing_backend()
-        try:
-            result = backend.quote(descs)
-        except BssAccessDenied:
-            result = _web_fallback_quote(descs)
-        except PricingNotAvailable:
-            result = _web_fallback_quote(descs)
+    backend = get_bss_pricing_backend()
+    try:
+        result = backend.quote(descs)
+    except BssAccessDenied:
+        result = await _web_fallback_quote(descs)
+    except PricingNotAvailable:
+        result = await _web_fallback_quote(descs)
 
-        get_quote_store().save(result)
-        return {
-            "text": format_text(result),
-            **result.to_dict(),
-        }
-
-    return _run_tool_call(quote)
+    get_quote_store().save(result)
+    return {
+        "text": format_text(result),
+        **result.to_dict(),
+    }
 
 
 @mcp.tool()
-def price_discover(
+async def price_discover(
     service: str,
     region: str | None = None,
     keyword: str | None = None,
 ) -> dict[str, object]:
     """Discover available resource types and specs for a Huawei Cloud service."""
 
-    def discover() -> dict[str, object]:
-        backend = get_bss_pricing_backend()
+    backend = get_bss_pricing_backend()
+    try:
         specs = backend.discover_specs(service, region=region, keyword=keyword)
-        return {
-            "service": service,
-            "region": region,
-            "specs": specs,
-            "count": len(specs),
-        }
-
-    return _run_tool_call(discover)
+    except BssAccessDenied:
+        raise ToolError(
+            f"BSS API access denied (CBC.0156). Cannot discover specs for '{service}'. "
+            f"Known services: {', '.join(sorted(SERVICE_HASH_MAP.keys()))}"
+        )
+    except PricingNotAvailable:
+        raise ToolError(
+            f"Pricing not available for '{service}'. "
+            f"Known services: {', '.join(sorted(SERVICE_HASH_MAP.keys()))}"
+        )
+    return {
+        "service": service,
+        "region": region,
+        "specs": specs,
+        "count": len(specs),
+    }
 
 
 @mcp.tool()

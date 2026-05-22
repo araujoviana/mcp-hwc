@@ -451,6 +451,17 @@ wheels = [
 ]
 
 [[package]]
+name = "huaweicloudsdkbss"
+version = "3.1.196"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "huaweicloudsdkcore" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f6/20/507ed6d7c4613a0655dc16c9204a9963c8e0e9daffee5c4610e39f79190a/huaweicloudsdkbss-3.1.196-py3-none-any.whl", hash = "sha256:30e8416b266b112322dfe05d1b7a0a5de952644efcdf995ce0c92fda74d2a3ef", size = 674579, upload-time = "2026-05-21T12:15:08.544Z" },
+]
+
+[[package]]
 name = "huaweicloudsdkcae"
 version = "3.1.192"
 source = { registry = "https://pypi.org/simple" }
@@ -650,7 +661,7 @@ wheels = [
 
 [[package]]
 name = "huaweicloudsdkcore"
-version = "3.1.192"
+version = "3.1.196"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "certifi" },
@@ -663,7 +674,7 @@ dependencies = [
     { name = "six" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3b/44/4fd3a4ae3034e64a47c3dfd57057278f4ef22828f6c6e8a846d13afcc489/huaweicloudsdkcore-3.1.192-py3-none-any.whl", hash = "sha256:69de5f5283abdcec69a7a428a1fc51cc5dd6530c3074c512f2a115cb3c141956", size = 69555, upload-time = "2026-04-24T08:39:06.383Z" },
+    { url = "https://files.pythonhosted.org/packages/68/00/1903ec7ecdd92888eb63c72f12fd9fb58cab5593fc1cc24d4f7118484d1e/huaweicloudsdkcore-3.1.196-py3-none-any.whl", hash = "sha256:193c64cef86e71b71f105564ddee62c2606bc9a03f5551fb0559b257c138e712", size = 69556, upload-time = "2026-05-21T12:16:07.22Z" },
 ]
 
 [[package]]
@@ -1315,6 +1326,7 @@ dependencies = [
     { name = "huaweicloudsdkapm" },
     { name = "huaweicloudsdkas" },
     { name = "huaweicloudsdkasm" },
+    { name = "huaweicloudsdkbss" },
     { name = "huaweicloudsdkcae" },
     { name = "huaweicloudsdkcbh" },
     { name = "huaweicloudsdkcbr" },
@@ -1403,6 +1415,7 @@ requires-dist = [
     { name = "huaweicloudsdkapm", specifier = ">=3.1.192" },
     { name = "huaweicloudsdkas", specifier = ">=3.1.192" },
     { name = "huaweicloudsdkasm", specifier = ">=3.1.192" },
+    { name = "huaweicloudsdkbss", specifier = ">=3.1.196" },
     { name = "huaweicloudsdkcae", specifier = ">=3.1.192" },
     { name = "huaweicloudsdkcbh", specifier = ">=3.1.192" },
     { name = "huaweicloudsdkcbr", specifier = ">=3.1.192" },

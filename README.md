@@ -4,7 +4,8 @@ Huawei Cloud MCP server for provisioning, operating, and inspecting cloud resour
 
 ## What It Does
 
-- exposes Huawei Cloud SDK operations through MCP tools
+- exposes compact workflow tools for common provisioning tasks
+- keeps generic Huawei Cloud SDK operations available for advanced cases
 - supports direct OBS, SSH, SWR image push, FunctionGraph deploy, and LTS log query workflows
 - provides least-input defaults for common provisioning flows
 - supports Kubernetes and Helm operations against CCE clusters
@@ -18,13 +19,8 @@ The server is split into three layers.
 - `huaweicloud_summarize_capabilities`
 - `huaweicloud_resolve_defaults`
 
-2. Generic SDK execution
-- `huaweicloud_list_operations`
-- `huaweicloud_describe_operation`
-- `huaweicloud_call_operation`
-- service-specific `*_list_operations`, `*_describe_operation`, `*_call_operation`
-
-3. Direct workflow helpers
+2. Workflow helpers
+- ECS: `ecs_create_vm`
 - OBS: `obs_*`
 - SSH: `ssh_*`
 - SWR: `swr_upload_image`
@@ -33,6 +29,13 @@ The server is split into three layers.
 - CCE access: `cce_get_kubeconfig`
 - Kubernetes: `k8s_apply_manifest`, `k8s_get_resources`, `k8s_wait`, `k8s_logs`, `k8s_exec`
 - Helm: `helm_install`, `helm_upgrade`, `helm_uninstall`
+
+3. Generic SDK execution
+- `huaweicloud_list_operations`
+- `huaweicloud_describe_operation`
+- `huaweicloud_call_operation`
+
+Generated service-specific SDK tools such as `ecs_call_operation` still exist in code, but are hidden from the MCP catalog by default to reduce model context. Set `MCP_HWC_ENABLE_SERVICE_TOOLS=all` or a comma-separated allowlist such as `MCP_HWC_ENABLE_SERVICE_TOOLS=ecs,vpc,ims` to expose them.
 
 ## Service Coverage
 
@@ -109,8 +112,8 @@ Most flows should not require `HWC_REGION`, `HWC_PROJECT_ID`, or service-specifi
 
 - Use `huaweicloud_summarize_capabilities` when you want a fast answer about what a service can do through the SDK surface.
 - Use `huaweicloud_resolve_defaults` when the request is vague and you want the least-input provisioning profile first.
-- Use the generic SDK tools when you need breadth.
-- Use the direct helpers when you need end-to-end workflows.
+- Use workflow tools such as `ecs_create_vm` before generic SDK tools.
+- Use the generic SDK tools when no workflow helper covers the operation.
 - Use `cce_get_kubeconfig` before `k8s_*` or `helm_*` when operating on a CCE cluster.
 
 ## Testing
