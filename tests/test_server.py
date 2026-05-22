@@ -398,6 +398,88 @@ def test_ecs_tool_function_calls_service(monkeypatch: pytest.MonkeyPatch) -> Non
     assert result["response"]["ok"] is True
 
 
+def test_ecs_create_vm_uses_compact_workflow_without_polling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str, object]] = []
+
+    class FakeWorkflowService:
+        def __init__(self, service_name: str):
+            self.service_name = service_name
+
+        def call_operation(self, operation: str, parameters=None) -> dict[str, object]:
+            calls.append((self.service_name, operation, parameters))
+            if self.service_name == "vpc":
+                if operation == "list_vpcs":
+                    return {"response": {"vpcs": [{"id": "vpc-1", "name": "vpc-default"}]}}
+                if operation == "list_subnets":
+                    return {"response": {"subnets": [{"id": "subnet-1", "name": "subnet-default"}]}}
+                if operation == "show_subnet":
+                    return {"response": {"subnet": {"id": "subnet-1", "cidr": "192.168.0.0/24"}}}
+                if operation == "create_security_group":
+                    return {"response": {"security_group": {"id": "sg-1"}}}
+                if operation == "create_security_group_rule":
+                    return {"response": {"security_group_rule": {"id": "rule-1"}}}
+            if self.service_name == "ims" and operation == "list_images":
+                return {
+                    "response": {
+                        "images": [
+                            {
+                                "id": "image-1",
+                                "name": "Ubuntu 24.04",
+                                "status": "active",
+                                "__platform": "Ubuntu",
+                                "__os_version": "Ubuntu 24.04 server 64bit",
+                                "__os_type": "Linux",
+                            }
+                        ]
+                    }
+                }
+            if self.service_name == "ecs":
+                if operation == "list_flavors":
+                    return {
+                        "response": {
+                            "flavors": [
+                                {
+                                    "id": "ac8.large.2",
+                                    "vcpus": "2",
+                                    "ram": 4096,
+                                    "os_extra_specs": {"cond:operation:az": "la-south-2a(normal)"},
+                                }
+                            ]
+                        }
+                    }
+                if operation == "create_servers":
+                    return {
+                        "service": "ecs",
+                        "region": "la-south-2",
+                        "response": {"job_id": "job-1", "server_ids": ["server-1"]},
+                    }
+            raise AssertionError((self.service_name, operation, parameters))
+
+    monkeypatch.setattr(
+        server,
+        "_get_resolved_sdk_service",
+        lambda service_name, *args, **kwargs: FakeWorkflowService(service_name),
+    )
+
+    result = server.ecs_create_vm(
+        region="santiago",
+        name="web-01",
+        ssh_cidr="189.40.74.88/32",
+        return_password=False,
+    )
+
+    assert result["created"] is True
+    assert result["waited"] is False
+    assert result["job_id"] == "job-1"
+    assert result["server_ids"] == ["server-1"]
+    assert result["selected"]["vpc_id"] == "vpc-1"
+    assert result["selected"]["image_id"] == "image-1"
+    assert result["login"]["password_returned"] is False
+    assert ("ecs", "show_job") not in [(service_name, operation) for service_name, operation, _ in calls]
+
+
 def test_functiongraph_deploy_code_builds_zip_payload(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
@@ -715,6 +797,7 @@ def test_generic_tool_resolves_service_alias(monkeypatch: pytest.MonkeyPatch) ->
 
 def test_wait_for_condition_polls_until_match(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple[str, object]] = []
+    sleep_calls: list[float] = []
     responses = iter(
         [
             {
@@ -742,7 +825,7 @@ def test_wait_for_condition_polls_until_match(monkeypatch: pytest.MonkeyPatch) -
         "_get_resolved_sdk_service",
         lambda *args, **kwargs: FakePollingService(),
     )
-    monkeypatch.setattr(server.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(server.time, "sleep", sleep_calls.append)
 
     result = server.huaweicloud_wait_for_condition(
         service_name="rds",
@@ -751,11 +834,12 @@ def test_wait_for_condition_polls_until_match(monkeypatch: pytest.MonkeyPatch) -
         response_path="response.instances[0].status",
         expected_value="ACTIVE",
         region="la-south-2",
-        timeout_seconds=30,
+        timeout_seconds=120,
         interval_seconds=1,
     )
 
     assert len(calls) == 2
+    assert sleep_calls == [server._MIN_POLL_INTERVAL_SECONDS]
     assert result["matched"] is True
     assert result["value"] == "ACTIVE"
     assert result["last_result"]["response"]["instances"][0]["status"] == "ACTIVE"
@@ -987,7 +1071,7 @@ async def test_mcp_session_can_call_obs_tool(monkeypatch: pytest.MonkeyPatch) ->
 
 
 @pytest.mark.anyio
-async def test_mcp_session_can_call_rds_tool(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_mcp_session_can_call_generic_sdk_tool(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         server, "get_rds_service", lambda *args, **kwargs: FakeSdkService("rds")
     )
@@ -995,7 +1079,7 @@ async def test_mcp_session_can_call_rds_tool(monkeypatch: pytest.MonkeyPatch) ->
     async with create_connected_server_and_client_session(
         server.mcp, raise_exceptions=True
     ) as session:
-        result = await session.call_tool("rds_list_operations", {})
+        result = await session.call_tool("huaweicloud_list_operations", {"service_name": "rds"})
 
     assert result.isError is False
     assert result.structuredContent["service"] == "rds"
@@ -1003,35 +1087,83 @@ async def test_mcp_session_can_call_rds_tool(monkeypatch: pytest.MonkeyPatch) ->
 
 
 @pytest.mark.anyio
-async def test_mcp_session_can_call_ims_tool(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        server, "get_ims_service", lambda *args, **kwargs: FakeSdkService("ims")
-    )
-
+async def test_mcp_session_hides_generated_sdk_tools_by_default() -> None:
     async with create_connected_server_and_client_session(
         server.mcp, raise_exceptions=True
     ) as session:
-        result = await session.call_tool("ims_list_operations", {})
+        tools = await session.list_tools()
 
-    assert result.isError is False
-    assert result.structuredContent["service"] == "ims"
-    assert result.structuredContent["operations"][0] == "ims_demo_operation"
+    tool_names = {tool.name for tool in tools.tools}
+    assert "ims_list_operations" not in tool_names
+    assert "ecs_create_vm" in tool_names
+    assert "huaweicloud_list_operations" in tool_names
 
 
 @pytest.mark.anyio
-async def test_mcp_session_can_call_cce_tool(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_mcp_session_can_call_ecs_create_vm(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeWorkflowService:
+        def __init__(self, service_name: str):
+            self.service_name = service_name
+
+        def call_operation(self, operation: str, parameters=None) -> dict[str, object]:
+            if self.service_name == "vpc":
+                if operation == "list_vpcs":
+                    return {"response": {"vpcs": [{"id": "vpc-1", "name": "vpc-default"}]}}
+                if operation == "list_subnets":
+                    return {"response": {"subnets": [{"id": "subnet-1", "name": "subnet-default"}]}}
+                if operation == "show_subnet":
+                    return {"response": {"subnet": {"id": "subnet-1"}}}
+                if operation == "create_security_group":
+                    return {"response": {"security_group": {"id": "sg-1"}}}
+                if operation == "create_security_group_rule":
+                    return {"response": {}}
+            if self.service_name == "ims" and operation == "list_images":
+                return {
+                    "response": {
+                        "images": [
+                            {
+                                "id": "image-1",
+                                "name": "Ubuntu 24.04",
+                                "status": "active",
+                                "__platform": "Ubuntu",
+                                "__os_version": "Ubuntu 24.04 server 64bit",
+                                "__os_type": "Linux",
+                            }
+                        ]
+                    }
+                }
+            if self.service_name == "ecs":
+                if operation == "list_flavors":
+                    return {
+                        "response": {
+                            "flavors": [
+                                {
+                                    "id": "ac8.large.2",
+                                    "vcpus": "2",
+                                    "ram": 4096,
+                                    "os_extra_specs": {"cond:operation:az": "la-south-2a(normal)"},
+                                }
+                            ]
+                        }
+                    }
+                if operation == "create_servers":
+                    return {"service": "ecs", "region": "la-south-2", "response": {"job_id": "job-1"}}
+            raise AssertionError((self.service_name, operation))
+
     monkeypatch.setattr(
-        server, "get_cce_service", lambda *args, **kwargs: FakeSdkService("cce")
+        server,
+        "_get_resolved_sdk_service",
+        lambda service_name, *args, **kwargs: FakeWorkflowService(service_name),
     )
 
     async with create_connected_server_and_client_session(
         server.mcp, raise_exceptions=True
     ) as session:
-        result = await session.call_tool("cce_list_operations", {})
+        result = await session.call_tool("ecs_create_vm", {"region": "la-south-2"})
 
     assert result.isError is False
-    assert result.structuredContent["service"] == "cce"
-    assert result.structuredContent["operations"][0] == "cce_demo_operation"
+    assert result.structuredContent["created"] is True
+    assert result.structuredContent["job_id"] == "job-1"
 
 
 @pytest.mark.anyio

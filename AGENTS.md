@@ -9,7 +9,7 @@
 - `project_id` should be resolved automatically by the Huawei SDK through IAM when the region is known. If automatic resolution is ambiguous, prefer an explicit `project_id` tool argument instead of asking for an env var.
 - For IAM and other global-account flows, prefer automatic region-based domain discovery first; only fall back to an explicit `domain_id` tool argument when needed.
 - When the user gives a vague provisioning request, prefer `huaweicloud_resolve_defaults` first so the agent can anchor on a strong least-input profile before falling back to raw schema discovery.
-- For ECS provisioning flows, use `vpc_*` tools to discover or create VPC, subnet, route, and security-group prerequisites, and use `ims_*` tools to discover the image to boot from.
+- For ECS provisioning flows, use `ecs_create_vm` first. It resolves normal VPC, subnet, security-group, image, flavor, and create payload details from minimal input.
 - After provisioning SSH-capable compute such as ECS instances, use `ssh_execute`, `ssh_upload_file`, and `ssh_download_file` to install packages, edit config files, move artifacts, and validate services.
 - When a workflow needs a container image pushed to SWR, prefer `swr_upload_image` over telling the user to log in and push manually.
 - When a workflow needs FunctionGraph code deployed from local files, prefer `functiongraph_deploy_code` over asking the user to zip or base64-encode source by hand.
@@ -22,7 +22,7 @@
 - Use IAM tools to manage policies, users, groups, agencies, roles, access keys, and related identity resources instead of telling the user to handle IAM manually.
 - Use the networking service tools for full network setup when needed: `vpc_*`, `nat_*`, `dns_*`, `er_*`, `vpn_*`, `dc_*`, `geip_*`, `ga_*`, `vpcep_*`, `cc_*`, `esw_*`, `apig_*`, `cdn_*`, `elb_*`, and `eip_*`.
 - Container-platform coverage includes `cce_*`, `cae_*`, `functiongraph_*`, `asm_*`, `swr_*`, and `ucs_*`.
-- Prefer `huaweicloud_list_services` and the generic `huaweicloud_*` tools when you need service aliases or `api_version` selection. Use `huaweicloud_summarize_capabilities` first when the user asks what a service can do at a high level. Service-specific `*_list_operations`, `*_describe_operation`, and `*_call_operation` tools are available for the supported families.
+- Prefer workflow tools before raw SDK calls. Use `huaweicloud_list_services` and the generic `huaweicloud_*` tools when you need service aliases, uncommon operations, or `api_version` selection. Use `huaweicloud_summarize_capabilities` first when the user asks what a service can do at a high level. Service-specific `*_list_operations`, `*_describe_operation`, and `*_call_operation` tools are hidden from the MCP catalog by default; expose them with `MCP_HWC_ENABLE_SERVICE_TOOLS=all` or a comma-separated service allowlist.
 - `modelarts_studio_*` and `maas_*` share the MaStudio SDK surface, `sfs_*` is backed by the SFS Turbo SDK surface, `taurusdb_*` is backed by the GaussDB SDK surface, `geminidb` resolves to `gaussdb_nosql`, `vbs` resolves to `cbr`, and `dms_*` complements `kafka_*`, `rabbitmq_*`, and `rocketmq_*`.
 - CodeArts is split across `codearts_artifact_*`, `codearts_build_*`, `codearts_check_*`, `codearts_deploy_*`, `codearts_pipeline_*`, `codearts_repo_*`, and `codehub_*` because Huawei publishes separate SDK families.
 - Observability and governance coverage now includes `apm_*`, `aom_*`, `lts_*`, `ces_*`, `cts_*`, `config_*`, and `organizations_*`.

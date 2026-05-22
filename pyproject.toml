@@ -13,6 +13,7 @@ dependencies = [
     "huaweicloudsdkapm>=3.1.192",
     "huaweicloudsdkas>=3.1.192",
     "huaweicloudsdkasm>=3.1.192",
+    "huaweicloudsdkbss>=3.1.196",
     "huaweicloudsdkcae>=3.1.192",
     "huaweicloudsdkcbh>=3.1.192",
     "huaweicloudsdkcbr>=3.1.192",
