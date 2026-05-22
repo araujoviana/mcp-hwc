@@ -3,6 +3,8 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
+import pytest
+
 from mcp_hwc.pricing.models import QuoteItem, QuoteResult, ResourceDescriptor
 
 
@@ -18,8 +20,6 @@ def test_resource_descriptor_defaults() -> None:
 
 
 def test_resource_descriptor_rejects_invalid_period_type() -> None:
-    import pytest
-
     with pytest.raises(ValueError, match="period_type"):
         ResourceDescriptor(
             service="ecs",
@@ -66,8 +66,6 @@ def test_quote_result_monthly_and_annual() -> None:
 
 
 def test_quote_result_on_demand_monthly_from_hourly() -> None:
-    import pytest
-
     result = QuoteResult(
         quote_id=uuid.uuid4(),
         items=[
