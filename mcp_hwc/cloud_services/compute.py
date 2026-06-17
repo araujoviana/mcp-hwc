@@ -4,10 +4,10 @@ import re
 import secrets
 from typing import TYPE_CHECKING
 
-from .errors import HelperToolError
+from mcp_hwc.core.errors import HelperToolError
 
 if TYPE_CHECKING:
-    from .sdk_service import HuaweiCloudSdkService
+    from mcp_hwc.core.sdk_service import HuaweiCloudSdkService
 
 
 def generate_secret_password(prefix: str = "Mcp") -> str:

@@ -5,8 +5,8 @@ import io
 import uuid
 from typing import Any
 
-from .models import QuoteItem, QuoteResult, ResourceDescriptor
-from .persistence import QuoteStore
+from mcp_hwc.pricing.models import QuoteItem, QuoteResult, ResourceDescriptor
+from mcp_hwc.pricing.persistence import QuoteStore
 
 
 _TERRAFORM_RESOURCE_MAP: dict[str, str] = {
