@@ -1,6 +1,6 @@
 import pytest
 
-from mcp_hwc.defaults import resolve_service_defaults
+from mcp_hwc.core.defaults import resolve_service_defaults
 
 
 def test_resolve_service_defaults_normalizes_region_and_balanced_intent() -> None:

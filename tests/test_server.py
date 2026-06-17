@@ -9,7 +9,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 from mcp.shared.memory import create_connected_server_and_client_session
 
 from mcp_hwc import server
-from mcp_hwc.obs_service import ObsServiceError
+from mcp_hwc.cloud_services.obs_service import ObsServiceError
 
 
 class FakeObsService:

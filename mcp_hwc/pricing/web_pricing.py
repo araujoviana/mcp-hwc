@@ -5,8 +5,8 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from .catalog import CLOUD_SERVICE_TYPES
-from .models import QuoteItem, QuoteResult, ResourceDescriptor
+from mcp_hwc.pricing.catalog import CLOUD_SERVICE_TYPES
+from mcp_hwc.pricing.models import QuoteItem, QuoteResult, ResourceDescriptor
 
 log = logging.getLogger(__name__)
 
