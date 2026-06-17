@@ -3,10 +3,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 import time
 
-from .errors import HelperToolError
+from mcp_hwc.core.errors import HelperToolError
 
 if TYPE_CHECKING:
-    from .sdk_service import HuaweiCloudSdkService
+    from mcp_hwc.core.sdk_service import HuaweiCloudSdkService
 
 
 DEFAULT_POLL_INTERVAL_SECONDS = 60

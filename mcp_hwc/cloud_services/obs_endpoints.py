@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from urllib.parse import urlparse
 
-from .regions import normalize_region_input
+from mcp_hwc.core.regions import normalize_region_input
 
 OBS_GLOBAL_SERVER = "https://obs.myhuaweicloud.com"
 OBS_SERVER_TEMPLATE = "https://obs.{region}.myhuaweicloud.com"

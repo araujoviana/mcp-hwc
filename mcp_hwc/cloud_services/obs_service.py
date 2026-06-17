@@ -6,8 +6,8 @@ from typing import Any, Protocol
 
 from obs import ObsClient
 
-from .config import ObsConfig
-from .obs_endpoints import build_obs_server, normalize_region
+from mcp_hwc.core.config import ObsConfig
+from mcp_hwc.cloud_services.obs_endpoints import build_obs_server, normalize_region
 
 
 class ObsServiceError(RuntimeError):

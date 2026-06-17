@@ -5,7 +5,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from .models import QuoteItem, QuoteResult
+from mcp_hwc.pricing.models import QuoteItem, QuoteResult
 
 
 class QuoteStore:

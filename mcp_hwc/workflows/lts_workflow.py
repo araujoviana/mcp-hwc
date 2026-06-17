@@ -4,9 +4,9 @@ from datetime import datetime, timedelta, timezone
 import json
 import re
 
-from .compute import extract_first_string, select_named_resource
-from .errors import HelperToolError
-from .sdk_service import HuaweiCloudSdkService
+from mcp_hwc.cloud_services.compute import extract_first_string, select_named_resource
+from mcp_hwc.core.errors import HelperToolError
+from mcp_hwc.core.sdk_service import HuaweiCloudSdkService
 
 
 def normalize_time_ms(

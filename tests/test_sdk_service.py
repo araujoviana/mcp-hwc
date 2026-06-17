@@ -4,8 +4,8 @@ from huaweicloudsdkcore.auth.credentials import GlobalCredentials
 from huaweicloudsdkecs.v2.model.create_servers_response import CreateServersResponse
 from huaweicloudsdkrds.v3.model.create_instance_response import CreateInstanceResponse
 
-from mcp_hwc.config import CloudApiConfig
-from mcp_hwc.sdk_service import (
+from mcp_hwc.core.config import CloudApiConfig
+from mcp_hwc.core.sdk_service import (
     HuaweiCloudSdkService,
     build_sdk_client,
     list_supported_services,

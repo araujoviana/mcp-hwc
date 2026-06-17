@@ -13,7 +13,7 @@ from huaweicloudsdkcore.exceptions import exceptions as sdk_exceptions
 from huaweicloudsdkcore.region.region import Region
 from huaweicloudsdkcore.utils.http_utils import sanitize_for_serialization
 
-from .config import CloudApiConfig
+from mcp_hwc.core.config import CloudApiConfig
 
 _PRIMITIVE_TYPES = {"str", "int", "float", "bool", "object"}
 _PASSTHROUGH_TYPES = _PRIMITIVE_TYPES | {"none_type", "NoneType"}

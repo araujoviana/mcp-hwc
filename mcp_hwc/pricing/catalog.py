@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from mcp_hwc.regions import normalize_region_input
+from mcp_hwc.core.regions import normalize_region_input
 
 CLOUD_SERVICE_TYPES: dict[str, str] = {
     "ecs": "hws.service.type.ec2",

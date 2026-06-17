@@ -8,13 +8,13 @@ from urllib.parse import urlparse
 
 from dotenv import dotenv_values, find_dotenv
 
-from .obs_endpoints import (
+from mcp_hwc.cloud_services.obs_endpoints import (
     OBS_GLOBAL_SERVER,
     build_obs_server,
     normalize_region,
     normalize_server,
 )
-from .regions import normalize_region_input
+from mcp_hwc.core.regions import normalize_region_input
 
 
 class ConfigError(ValueError):

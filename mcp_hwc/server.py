@@ -2,19 +2,22 @@ from __future__ import annotations
 
 from functools import lru_cache
 import os
+import sys
+import argparse
 from pathlib import Path
 import shutil
 import subprocess
 import time
+import uuid
 from typing import Callable, TypeVar
 from urllib.parse import urlparse
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 
-from .cli_service import DEFAULT_TOOL_IMAGES, CliService, CliServiceError, ContainerMount
-from .config import CloudApiConfig, ConfigError, ObsConfig
-from .compute import (
+from mcp_hwc.cloud_services.cli_service import DEFAULT_TOOL_IMAGES, CliService, CliServiceError, ContainerMount
+from mcp_hwc.core.config import CloudApiConfig, ConfigError, ObsConfig
+from mcp_hwc.cloud_services.compute import (
     create_ecs_security_group as _create_ecs_security_group,
     extract_first_string as _extract_first_string,
     extract_server_ips as _extract_server_ips,
@@ -30,9 +33,9 @@ from .compute import (
     resolve_vpc_and_subnet as _resolve_vpc_and_subnet,
     select_named_resource as _select_named_resource,
 )
-from .defaults import resolve_service_defaults
-from .errors import HelperToolError
-from .local_artifacts import (
+from mcp_hwc.core.defaults import resolve_service_defaults
+from mcp_hwc.core.errors import HelperToolError
+from mcp_hwc.utils.local_artifacts import (
     format_cli_value as _format_cli_value,
     package_functiongraph_source as _package_functiongraph_source,
     parse_json_output as _parse_json_output,
@@ -44,15 +47,15 @@ from .local_artifacts import (
     resolve_output_path as _resolve_output_path,
     serialize_kubeconfig_document as _serialize_kubeconfig_document,
 )
-from .lts_workflow import (
+from mcp_hwc.workflows.lts_workflow import (
     filter_lts_logs as _filter_lts_logs,
     normalize_time_ms as _normalize_time_ms,
     query_lts_logs,
     resolve_lts_log_group as _resolve_lts_log_group,
     resolve_lts_log_stream as _resolve_lts_log_stream,
 )
-from .obs_service import ObsService, ObsServiceError
-from .polling import (
+from mcp_hwc.cloud_services.obs_service import ObsService, ObsServiceError
+from mcp_hwc.utils.polling import (
     DEFAULT_POLL_INTERVAL_SECONDS as _DEFAULT_POLL_INTERVAL_SECONDS,
     MIN_POLL_INTERVAL_SECONDS as _MIN_POLL_INTERVAL_SECONDS,
     extract_path_value as _extract_path_value,
@@ -61,7 +64,7 @@ from .polling import (
     wait_for_service_value as _wait_for_service_value,
     wait_condition_matches as _wait_condition_matches,
 )
-from .sdk_service import (
+from mcp_hwc.core.sdk_service import (
     HuaweiCloudSdkError,
     HuaweiCloudSdkService,
     SERVICE_SPECS,
@@ -69,8 +72,8 @@ from .sdk_service import (
     resolve_service_spec,
     summarize_service_capabilities,
 )
-from .ssh_service import SshService, SshServiceError
-from .swr_workflow import (
+from mcp_hwc.cloud_services.ssh_service import SshService, SshServiceError
+from mcp_hwc.workflows.swr_workflow import (
     decode_swr_auth as _decode_swr_auth,
     ensure_swr_namespace_and_repo as _ensure_swr_namespace_and_repo,
     looks_like_existing_resource_error as _looks_like_existing_resource_error,
@@ -79,14 +82,16 @@ from .swr_workflow import (
     run_local_command as _run_local_command,
     upload_swr_image,
 )
-from .pricing.models import QuoteItem, QuoteResult, ResourceDescriptor
-from .pricing.bss_pricing import BssAccessDenied, BssPricingBackend, PricingNotAvailable
-from .pricing.catalog import resolve_region as _pricing_resolve_region
-from .pricing.persistence import QuoteStore
-from .pricing.tools import export_csv, export_json, export_terraform, format_text
-from .pricing.web_pricing import SERVICE_HASH_MAP, WebPricingBackend
-from .workflows.ecs import create_ecs_vm as _create_ecs_vm_workflow
-from .workflows.sfs import create_accessible_share as _create_accessible_sfs_share_workflow
+from mcp_hwc.pricing.models import QuoteItem, QuoteResult, ResourceDescriptor
+from mcp_hwc.pricing.bss_pricing import BssAccessDenied, BssPricingBackend, PricingNotAvailable
+from mcp_hwc.pricing.catalog import resolve_region as _pricing_resolve_region
+from mcp_hwc.pricing.persistence import QuoteStore
+from mcp_hwc.pricing.tools import export_csv, export_json, export_terraform, format_text
+from mcp_hwc.pricing.web_pricing import SERVICE_HASH_MAP, WebPricingBackend
+from mcp_hwc.workflows.ecs import create_ecs_vm as _create_ecs_vm_workflow
+from mcp_hwc.workflows.sfs import create_accessible_share as _create_accessible_sfs_share_workflow
+
+from mcp_hwc.schemas.operations import EcsCreateSchema, GenericCallSchema
 
 T = TypeVar("T")
 
@@ -361,186 +366,46 @@ def _execute_cli_tool(
     )
 
 
-@mcp.tool()
-def obs_list_buckets() -> dict[str, object]:
-    """List OBS buckets accessible to the configured credentials."""
-    return _run_tool_call(lambda: get_obs_service().list_buckets())
+from mcp_hwc.routers.obs import (
+    register_obs_tools,
+    obs_list_buckets,
+    obs_create_bucket,
+    obs_list_objects,
+    obs_get_bucket_location,
+    obs_head_bucket,
+    obs_get_text_object,
+    obs_head_object,
+    obs_put_text_object,
+    obs_upload_file,
+    obs_download_object,
+    obs_delete_object,
+    obs_delete_bucket,
+)
+from mcp_hwc.routers.k8s import (
+    register_k8s_tools,
+    cce_get_kubeconfig,
+    k8s_apply_manifest,
+    k8s_get_resources,
+    k8s_wait,
+    k8s_logs,
+    k8s_exec,
+    helm_install,
+    helm_upgrade,
+    helm_uninstall,
+)
+from mcp_hwc.routers.pricing import (
+    register_pricing_tools,
+    price_quote,
+    price_discover,
+    price_export,
+    price_list_quotes,
+    price_get_quote,
+    price_share,
+)
 
-
-@mcp.tool()
-def obs_create_bucket(
-    bucket_name: str,
-    region: str | None = None,
-) -> dict[str, object]:
-    """Create an OBS bucket in the requested region code or alias like 'santiago'."""
-    return _run_tool_call(
-        lambda: get_obs_service().create_bucket(
-            bucket_name=bucket_name,
-            region=region,
-        )
-    )
-
-
-@mcp.tool()
-def obs_list_objects(
-    bucket_name: str,
-    prefix: str | None = None,
-    max_keys: int = 100,
-    marker: str | None = None,
-    region: str | None = None,
-) -> dict[str, object]:
-    """List objects in an OBS bucket, optionally filtered by prefix."""
-    return _run_tool_call(
-        lambda: get_obs_service().list_objects(
-            bucket_name=bucket_name,
-            prefix=prefix,
-            max_keys=max_keys,
-            marker=marker,
-            region=region,
-        )
-    )
-
-
-@mcp.tool()
-def obs_get_bucket_location(bucket_name: str) -> dict[str, str | None]:
-    """Get the region/location for an OBS bucket."""
-    return _run_tool_call(lambda: get_obs_service().get_bucket_location(bucket_name))
-
-
-@mcp.tool()
-def obs_head_bucket(
-    bucket_name: str,
-    region: str | None = None,
-) -> dict[str, object]:
-    """Check bucket metadata and reachability."""
-    return _run_tool_call(
-        lambda: get_obs_service().head_bucket(
-            bucket_name=bucket_name,
-            region=region,
-        )
-    )
-
-
-@mcp.tool()
-def obs_get_text_object(
-    bucket_name: str,
-    object_key: str,
-    encoding: str = "utf-8",
-    region: str | None = None,
-) -> dict[str, object]:
-    """Read an OBS object into memory and decode it as text."""
-    return _run_tool_call(
-        lambda: get_obs_service().get_object_text(
-            bucket_name=bucket_name,
-            object_key=object_key,
-            encoding=encoding,
-            region=region,
-        )
-    )
-
-
-@mcp.tool()
-def obs_head_object(
-    bucket_name: str,
-    object_key: str,
-    version_id: str | None = None,
-    region: str | None = None,
-) -> dict[str, object]:
-    """Read object metadata without downloading the object body."""
-    return _run_tool_call(
-        lambda: get_obs_service().head_object(
-            bucket_name=bucket_name,
-            object_key=object_key,
-            version_id=version_id,
-            region=region,
-        )
-    )
-
-
-@mcp.tool()
-def obs_put_text_object(
-    bucket_name: str,
-    object_key: str,
-    content: str,
-    region: str | None = None,
-) -> dict[str, object]:
-    """Upload text content into an OBS object."""
-    return _run_tool_call(
-        lambda: get_obs_service().put_text_object(
-            bucket_name=bucket_name,
-            object_key=object_key,
-            content=content,
-            region=region,
-        )
-    )
-
-
-@mcp.tool()
-def obs_upload_file(
-    bucket_name: str,
-    source_path: str,
-    object_key: str | None = None,
-    region: str | None = None,
-) -> dict[str, object]:
-    """Upload a local file into OBS, defaulting the object key to the file name."""
-    return _run_tool_call(
-        lambda: get_obs_service().upload_file(
-            bucket_name=bucket_name,
-            source_path=source_path,
-            object_key=object_key,
-            region=region,
-        )
-    )
-
-
-@mcp.tool()
-def obs_download_object(
-    bucket_name: str,
-    object_key: str,
-    destination_path: str,
-    region: str | None = None,
-) -> dict[str, object]:
-    """Download an OBS object to a local file path."""
-    return _run_tool_call(
-        lambda: get_obs_service().download_object(
-            bucket_name=bucket_name,
-            object_key=object_key,
-            destination_path=destination_path,
-            region=region,
-        )
-    )
-
-
-@mcp.tool()
-def obs_delete_object(
-    bucket_name: str,
-    object_key: str,
-    version_id: str | None = None,
-    region: str | None = None,
-) -> dict[str, object]:
-    """Delete an OBS object."""
-    return _run_tool_call(
-        lambda: get_obs_service().delete_object(
-            bucket_name=bucket_name,
-            object_key=object_key,
-            version_id=version_id,
-            region=region,
-        )
-    )
-
-
-@mcp.tool()
-def obs_delete_bucket(
-    bucket_name: str,
-    region: str | None = None,
-) -> dict[str, object]:
-    """Delete an OBS bucket."""
-    return _run_tool_call(
-        lambda: get_obs_service().delete_bucket(
-            bucket_name=bucket_name,
-            region=region,
-        )
-    )
+register_obs_tools(mcp)
+register_k8s_tools(mcp)
+register_pricing_tools(mcp)
 
 
 @mcp.tool()
@@ -983,599 +848,6 @@ def sfs_create_accessible_share(
 
 
 @mcp.tool()
-def cce_get_kubeconfig(
-    cluster_id: str,
-    region: str,
-    duration: int = 7,
-    destination_path: str | None = None,
-    project_id: str | None = None,
-    endpoint: str | None = None,
-    api_version: str | None = None,
-) -> dict[str, object]:
-    """Create a kubeconfig file for a CCE cluster and save it locally."""
-
-    def export_kubeconfig() -> dict[str, object]:
-        if duration <= 0:
-            raise ValueError("duration must be greater than zero")
-
-        service = _get_resolved_sdk_service(
-            "cce",
-            api_version=api_version,
-            region=region,
-            project_id=project_id,
-            endpoint=endpoint,
-        )
-        result = service.call_operation(
-            "create_kubernetes_cluster_cert",
-            {
-                "cluster_id": cluster_id,
-                "body": {"duration": duration},
-            },
-        )
-
-        output_path = _resolve_output_path(
-            destination_path,
-            prefix=f"{cluster_id[:8]}-",
-            suffix=".kubeconfig.json",
-        )
-        kubeconfig_text = _serialize_kubeconfig_document(result["response"])
-        output_path.write_text(kubeconfig_text, encoding="utf-8")
-        try:
-            output_path.chmod(0o600)
-        except OSError:
-            pass
-
-        return {
-            "service": "cce",
-            "operation": "create_kubernetes_cluster_cert",
-            "cluster_id": cluster_id,
-            "region": region,
-            "api_version": result["api_version"],
-            "kubeconfig_path": str(output_path),
-            "kubeconfig_format": "json",
-            "current_context": result["response"].get("current-context")
-            or result["response"].get("current_context"),
-            "expires_in_days": duration,
-            "port_id": result["response"].get("Port-ID")
-            or result["response"].get("port_id"),
-            "written": True,
-        }
-
-    return _run_tool_call(export_kubeconfig)
-
-
-@mcp.tool()
-def k8s_apply_manifest(
-    kubeconfig_path: str,
-    manifest: str | None = None,
-    manifest_path: str | None = None,
-    namespace: str | None = None,
-    context: str | None = None,
-    validate: bool = True,
-    server_side: bool = False,
-    execution_backend: str = "auto",
-    container_image: str | None = None,
-) -> dict[str, object]:
-    """Apply a Kubernetes manifest using kubectl."""
-
-    def apply_manifest() -> dict[str, object]:
-        if bool(manifest) == bool(manifest_path):
-            raise ValueError("Provide exactly one of manifest or manifest_path")
-
-        resolved_image = container_image or DEFAULT_TOOL_IMAGES.get("kubectl")
-        backend = get_cli_service().resolve_backend(
-            "kubectl",
-            backend=execution_backend,
-            container_image=resolved_image,
-        )
-        kubeconfig_args, mounts = _prepare_kubeconfig_for_backend(
-            kubeconfig_path,
-            context=context,
-            backend=backend,
-        )
-
-        args = [*kubeconfig_args, "apply", "-f"]
-        input_text = manifest
-        if manifest_path:
-            resolved_manifest_path = _resolve_existing_path(manifest_path)
-            if backend == "container":
-                mounted_manifest_path = "/tmp/mcp-hwc-manifest.yaml"
-                mounts.append(
-                    ContainerMount(
-                        resolved_manifest_path,
-                        mounted_manifest_path,
-                        read_only=True,
-                    )
-                )
-                args.append(mounted_manifest_path)
-            else:
-                args.append(str(resolved_manifest_path))
-            input_text = None
-        else:
-            args.append("-")
-
-        if namespace:
-            args.extend(["-n", namespace])
-        if not validate:
-            args.append("--validate=false")
-        if server_side:
-            args.append("--server-side")
-
-        result = _execute_cli_tool(
-            "kubectl",
-            args,
-            execution_backend=backend,
-            container_image=resolved_image,
-            input_text=input_text,
-            mounts=mounts,
-        )
-        return {
-            **result,
-            "resource_type": "kubernetes",
-            "namespace": namespace,
-            "manifest_source": "path" if manifest_path else "inline",
-            "applied": True,
-        }
-
-    return _run_tool_call(apply_manifest)
-
-
-@mcp.tool()
-def k8s_get_resources(
-    kubeconfig_path: str,
-    resource: str,
-    namespace: str | None = None,
-    all_namespaces: bool = False,
-    selector: str | None = None,
-    field_selector: str | None = None,
-    output: str = "yaml",
-    context: str | None = None,
-    execution_backend: str = "auto",
-    container_image: str | None = None,
-) -> dict[str, object]:
-    """Get Kubernetes resources using kubectl."""
-
-    def get_resources() -> dict[str, object]:
-        resolved_image = container_image or DEFAULT_TOOL_IMAGES.get("kubectl")
-        backend = get_cli_service().resolve_backend(
-            "kubectl",
-            backend=execution_backend,
-            container_image=resolved_image,
-        )
-        kubeconfig_args, mounts = _prepare_kubeconfig_for_backend(
-            kubeconfig_path,
-            context=context,
-            backend=backend,
-        )
-
-        args = [*kubeconfig_args, "get", resource, "-o", output]
-        if all_namespaces:
-            args.append("--all-namespaces")
-        elif namespace:
-            args.extend(["-n", namespace])
-        if selector:
-            args.extend(["-l", selector])
-        if field_selector:
-            args.extend(["--field-selector", field_selector])
-
-        result = _execute_cli_tool(
-            "kubectl",
-            args,
-            execution_backend=backend,
-            container_image=resolved_image,
-            mounts=mounts,
-        )
-        return {
-            **result,
-            "resource_type": "kubernetes",
-            "resource": resource,
-            "namespace": namespace,
-            "all_namespaces": all_namespaces,
-            "output_format": output,
-            "parsed_output": _parse_json_output(result["stdout"]) if output == "json" else None,
-        }
-
-    return _run_tool_call(get_resources)
-
-
-@mcp.tool()
-def k8s_wait(
-    kubeconfig_path: str,
-    resource: str,
-    namespace: str | None = None,
-    for_condition: str = "condition=Available",
-    timeout_seconds: int = 300,
-    context: str | None = None,
-    execution_backend: str = "auto",
-    container_image: str | None = None,
-) -> dict[str, object]:
-    """Wait for a Kubernetes resource condition using kubectl."""
-
-    def wait_for_resource() -> dict[str, object]:
-        if timeout_seconds <= 0:
-            raise ValueError("timeout_seconds must be greater than zero")
-
-        resolved_image = container_image or DEFAULT_TOOL_IMAGES.get("kubectl")
-        backend = get_cli_service().resolve_backend(
-            "kubectl",
-            backend=execution_backend,
-            container_image=resolved_image,
-        )
-        kubeconfig_args, mounts = _prepare_kubeconfig_for_backend(
-            kubeconfig_path,
-            context=context,
-            backend=backend,
-        )
-
-        args = [
-            *kubeconfig_args,
-            "wait",
-            resource,
-            "--for",
-            for_condition,
-            "--timeout",
-            f"{timeout_seconds}s",
-        ]
-        if namespace:
-            args.extend(["-n", namespace])
-
-        result = _execute_cli_tool(
-            "kubectl",
-            args,
-            execution_backend=backend,
-            container_image=resolved_image,
-            mounts=mounts,
-        )
-        return {
-            **result,
-            "resource_type": "kubernetes",
-            "resource": resource,
-            "namespace": namespace,
-            "for_condition": for_condition,
-            "wait_satisfied": True,
-        }
-
-    return _run_tool_call(wait_for_resource)
-
-
-@mcp.tool()
-def k8s_logs(
-    kubeconfig_path: str,
-    resource: str,
-    namespace: str | None = None,
-    container: str | None = None,
-    tail_lines: int = 200,
-    since: str | None = None,
-    previous: bool = False,
-    context: str | None = None,
-    execution_backend: str = "auto",
-    container_image: str | None = None,
-) -> dict[str, object]:
-    """Fetch Kubernetes logs using kubectl."""
-
-    def get_logs() -> dict[str, object]:
-        if tail_lines <= 0:
-            raise ValueError("tail_lines must be greater than zero")
-
-        resolved_image = container_image or DEFAULT_TOOL_IMAGES.get("kubectl")
-        backend = get_cli_service().resolve_backend(
-            "kubectl",
-            backend=execution_backend,
-            container_image=resolved_image,
-        )
-        kubeconfig_args, mounts = _prepare_kubeconfig_for_backend(
-            kubeconfig_path,
-            context=context,
-            backend=backend,
-        )
-
-        args = [*kubeconfig_args, "logs", resource, "--tail", str(tail_lines)]
-        if namespace:
-            args.extend(["-n", namespace])
-        if container:
-            args.extend(["-c", container])
-        if since:
-            args.extend(["--since", since])
-        if previous:
-            args.append("--previous")
-
-        result = _execute_cli_tool(
-            "kubectl",
-            args,
-            execution_backend=backend,
-            container_image=resolved_image,
-            mounts=mounts,
-        )
-        return {
-            **result,
-            "resource_type": "kubernetes",
-            "resource": resource,
-            "namespace": namespace,
-            "container": container,
-            "logs": result["stdout"],
-        }
-
-    return _run_tool_call(get_logs)
-
-
-@mcp.tool()
-def k8s_exec(
-    kubeconfig_path: str,
-    pod: str,
-    namespace: str,
-    command: str,
-    container: str | None = None,
-    context: str | None = None,
-    execution_backend: str = "auto",
-    container_image: str | None = None,
-) -> dict[str, object]:
-    """Execute a shell command inside a Kubernetes pod using kubectl exec."""
-
-    def exec_in_pod() -> dict[str, object]:
-        if not namespace:
-            raise ValueError("namespace is required")
-        if not command.strip():
-            raise ValueError("command cannot be empty")
-
-        resolved_image = container_image or DEFAULT_TOOL_IMAGES.get("kubectl")
-        backend = get_cli_service().resolve_backend(
-            "kubectl",
-            backend=execution_backend,
-            container_image=resolved_image,
-        )
-        kubeconfig_args, mounts = _prepare_kubeconfig_for_backend(
-            kubeconfig_path,
-            context=context,
-            backend=backend,
-        )
-
-        args = [*kubeconfig_args, "exec", pod, "-n", namespace]
-        if container:
-            args.extend(["-c", container])
-        args.extend(["--", "sh", "-lc", command])
-
-        result = _execute_cli_tool(
-            "kubectl",
-            args,
-            execution_backend=backend,
-            container_image=resolved_image,
-            mounts=mounts,
-        )
-        return {
-            **result,
-            "resource_type": "kubernetes",
-            "pod": pod,
-            "namespace": namespace,
-            "container": container,
-        }
-
-    return _run_tool_call(exec_in_pod)
-
-
-@mcp.tool()
-def helm_install(
-    kubeconfig_path: str,
-    release_name: str,
-    chart: str,
-    namespace: str | None = None,
-    repo: str | None = None,
-    version: str | None = None,
-    values: str | None = None,
-    values_file: str | None = None,
-    set_values: dict[str, object] | None = None,
-    create_namespace: bool = True,
-    wait: bool = True,
-    timeout_seconds: int = 600,
-    context: str | None = None,
-    execution_backend: str = "auto",
-    container_image: str | None = None,
-) -> dict[str, object]:
-    """Install a Helm chart into a Kubernetes cluster."""
-
-    def install_chart() -> dict[str, object]:
-        if timeout_seconds <= 0:
-            raise ValueError("timeout_seconds must be greater than zero")
-
-        resolved_image = container_image or DEFAULT_TOOL_IMAGES.get("helm")
-        backend = get_cli_service().resolve_backend(
-            "helm",
-            backend=execution_backend,
-            container_image=resolved_image,
-        )
-        kubeconfig_args, mounts = _prepare_kubeconfig_for_backend(
-            kubeconfig_path,
-            context=context,
-            backend=backend,
-        )
-        effective_chart, chart_mounts = _prepare_chart_reference(chart, backend=backend)
-        mounts.extend(chart_mounts)
-
-        values_path, delete_values_file = _prepare_helm_values_file(values, values_file)
-        try:
-            args = [*kubeconfig_args, "install", release_name, effective_chart]
-            if namespace:
-                args.extend(["--namespace", namespace])
-            if repo:
-                args.extend(["--repo", repo])
-            if version:
-                args.extend(["--version", version])
-            if create_namespace:
-                args.append("--create-namespace")
-            if wait:
-                args.extend(["--wait", "--timeout", f"{timeout_seconds}s"])
-            if values_path is not None:
-                if backend == "container":
-                    mounted_values_path = "/tmp/mcp-hwc-helm-values.yaml"
-                    mounts.append(
-                        ContainerMount(values_path, mounted_values_path, read_only=True)
-                    )
-                    args.extend(["--values", mounted_values_path])
-                else:
-                    args.extend(["--values", str(values_path)])
-            for key, value in sorted((set_values or {}).items()):
-                args.extend(["--set", f"{key}={_format_cli_value(value)}"])
-
-            result = _execute_cli_tool(
-                "helm",
-                args,
-                execution_backend=backend,
-                container_image=resolved_image,
-                mounts=mounts,
-            )
-            return {
-                **result,
-                "resource_type": "helm",
-                "release_name": release_name,
-                "chart": chart,
-                "namespace": namespace,
-                "installed": True,
-            }
-        finally:
-            if values_path is not None and delete_values_file:
-                values_path.unlink(missing_ok=True)
-
-    return _run_tool_call(install_chart)
-
-
-@mcp.tool()
-def helm_upgrade(
-    kubeconfig_path: str,
-    release_name: str,
-    chart: str,
-    namespace: str | None = None,
-    repo: str | None = None,
-    version: str | None = None,
-    values: str | None = None,
-    values_file: str | None = None,
-    set_values: dict[str, object] | None = None,
-    install_if_missing: bool = True,
-    wait: bool = True,
-    timeout_seconds: int = 600,
-    context: str | None = None,
-    execution_backend: str = "auto",
-    container_image: str | None = None,
-) -> dict[str, object]:
-    """Upgrade a Helm release, optionally installing it if missing."""
-
-    def upgrade_chart() -> dict[str, object]:
-        if timeout_seconds <= 0:
-            raise ValueError("timeout_seconds must be greater than zero")
-
-        resolved_image = container_image or DEFAULT_TOOL_IMAGES.get("helm")
-        backend = get_cli_service().resolve_backend(
-            "helm",
-            backend=execution_backend,
-            container_image=resolved_image,
-        )
-        kubeconfig_args, mounts = _prepare_kubeconfig_for_backend(
-            kubeconfig_path,
-            context=context,
-            backend=backend,
-        )
-        effective_chart, chart_mounts = _prepare_chart_reference(chart, backend=backend)
-        mounts.extend(chart_mounts)
-
-        values_path, delete_values_file = _prepare_helm_values_file(values, values_file)
-        try:
-            args = [*kubeconfig_args, "upgrade", release_name, effective_chart]
-            if install_if_missing:
-                args.append("--install")
-            if namespace:
-                args.extend(["--namespace", namespace])
-            if repo:
-                args.extend(["--repo", repo])
-            if version:
-                args.extend(["--version", version])
-            if wait:
-                args.extend(["--wait", "--timeout", f"{timeout_seconds}s"])
-            if values_path is not None:
-                if backend == "container":
-                    mounted_values_path = "/tmp/mcp-hwc-helm-values.yaml"
-                    mounts.append(
-                        ContainerMount(values_path, mounted_values_path, read_only=True)
-                    )
-                    args.extend(["--values", mounted_values_path])
-                else:
-                    args.extend(["--values", str(values_path)])
-            for key, value in sorted((set_values or {}).items()):
-                args.extend(["--set", f"{key}={_format_cli_value(value)}"])
-
-            result = _execute_cli_tool(
-                "helm",
-                args,
-                execution_backend=backend,
-                container_image=resolved_image,
-                mounts=mounts,
-            )
-            return {
-                **result,
-                "resource_type": "helm",
-                "release_name": release_name,
-                "chart": chart,
-                "namespace": namespace,
-                "upgraded": True,
-            }
-        finally:
-            if values_path is not None and delete_values_file:
-                values_path.unlink(missing_ok=True)
-
-    return _run_tool_call(upgrade_chart)
-
-
-@mcp.tool()
-def helm_uninstall(
-    kubeconfig_path: str,
-    release_name: str,
-    namespace: str | None = None,
-    wait: bool = True,
-    timeout_seconds: int = 300,
-    context: str | None = None,
-    execution_backend: str = "auto",
-    container_image: str | None = None,
-) -> dict[str, object]:
-    """Uninstall a Helm release from a Kubernetes cluster."""
-
-    def uninstall_chart() -> dict[str, object]:
-        if timeout_seconds <= 0:
-            raise ValueError("timeout_seconds must be greater than zero")
-
-        resolved_image = container_image or DEFAULT_TOOL_IMAGES.get("helm")
-        backend = get_cli_service().resolve_backend(
-            "helm",
-            backend=execution_backend,
-            container_image=resolved_image,
-        )
-        kubeconfig_args, mounts = _prepare_kubeconfig_for_backend(
-            kubeconfig_path,
-            context=context,
-            backend=backend,
-        )
-
-        args = [*kubeconfig_args, "uninstall", release_name]
-        if namespace:
-            args.extend(["--namespace", namespace])
-        if wait:
-            args.extend(["--wait", "--timeout", f"{timeout_seconds}s"])
-
-        result = _execute_cli_tool(
-            "helm",
-            args,
-            execution_backend=backend,
-            container_image=resolved_image,
-            mounts=mounts,
-        )
-        return {
-            **result,
-            "resource_type": "helm",
-            "release_name": release_name,
-            "namespace": namespace,
-            "uninstalled": True,
-        }
-
-    return _run_tool_call(uninstall_chart)
-
-
-@mcp.tool()
 def lts_query_logs(
     log_group_id: str | None = None,
     log_group_name: str | None = None,
@@ -1845,149 +1117,26 @@ def _register_sdk_tools(service_name: str) -> None:
 for _service_name in SERVICE_SPECS:
     _register_sdk_tools(_service_name)
 
-
-async def _web_fallback_quote(descs: list[ResourceDescriptor]) -> QuoteResult:
-    web = WebPricingBackend(headless=True)
-    return await web.quote(descs)
-
-
-@mcp.tool()
-async def price_quote(
-    resources: list[dict[str, object]],
-    region: str | None = None,
-) -> dict[str, object]:
-    """Get pricing/quotation for Huawei Cloud resources. Each resource dict needs: service, spec, region, period_type. Optional: period_num, quantity."""
-
-    descs = []
-    for r in resources:
-        r_region = str(r.get("region", "") or region or "")
-        if not r_region:
-            raise ToolError("region is required (per-resource or top-level)")
-        descs.append(ResourceDescriptor(
-            service=str(r["service"]),
-            spec=str(r["spec"]),
-            region=r_region,
-            period_type=str(r["period_type"]),
-            period_num=int(r.get("period_num", 1)),
-            quantity=int(r.get("quantity", 1)),
-        ))
-
-    backend = get_bss_pricing_backend()
-    try:
-        result = backend.quote(descs)
-    except BssAccessDenied:
-        result = await _web_fallback_quote(descs)
-    except PricingNotAvailable:
-        result = await _web_fallback_quote(descs)
-
-    get_quote_store().save(result)
-    return {
-        "text": format_text(result),
-        **result.to_dict(),
+def generate_config():
+    python_path = sys.executable
+    config = {
+        "mcpServers": {
+            "huawei-cloud": {
+                "command": python_path,
+                "args": ["-m", "mcp_hwc"]
+            }
+        }
     }
-
-
-@mcp.tool()
-async def price_discover(
-    service: str,
-    region: str | None = None,
-    keyword: str | None = None,
-) -> dict[str, object]:
-    """Discover available resource types and specs for a Huawei Cloud service."""
-
-    backend = get_bss_pricing_backend()
-    try:
-        specs = backend.discover_specs(service, region=region, keyword=keyword)
-    except BssAccessDenied:
-        raise ToolError(
-            f"BSS API access denied (CBC.0156). Cannot discover specs for '{service}'. "
-            f"Known services: {', '.join(sorted(SERVICE_HASH_MAP.keys()))}"
-        )
-    except PricingNotAvailable:
-        raise ToolError(
-            f"Pricing not available for '{service}'. "
-            f"Known services: {', '.join(sorted(SERVICE_HASH_MAP.keys()))}"
-        )
-    return {
-        "service": service,
-        "region": region,
-        "specs": specs,
-        "count": len(specs),
-    }
-
-
-@mcp.tool()
-def price_export(
-    quote_id: str,
-    format: str = "json",
-) -> dict[str, object]:
-    """Export a saved quote in json, csv, or terraform format."""
-
-    def export() -> dict[str, object]:
-        store = get_quote_store()
-        result = store.get(uuid.UUID(quote_id))
-        if format == "csv":
-            content = export_csv(result)
-        elif format == "terraform":
-            content = export_terraform(result)
-        else:
-            content = export_json(result)
-        return {
-            "quote_id": quote_id,
-            "format": format,
-            "content": content,
-        }
-
-    return _run_tool_call(export)
-
-
-@mcp.tool()
-def price_list_quotes(
-    limit: int = 20,
-    service: str | None = None,
-) -> dict[str, object]:
-    """List saved pricing quotes."""
-
-    def list_quotes() -> dict[str, object]:
-        store = get_quote_store()
-        return {"quotes": store.list_quotes(limit=limit, service=service)}
-
-    return _run_tool_call(list_quotes)
-
-
-@mcp.tool()
-def price_get_quote(quote_id: str) -> dict[str, object]:
-    """Retrieve a specific saved quote by ID."""
-
-    def get_quote() -> dict[str, object]:
-        store = get_quote_store()
-        result = store.get(uuid.UUID(quote_id))
-        return {
-            "text": format_text(result),
-            **result.to_dict(),
-        }
-
-    return _run_tool_call(get_quote)
-
-
-@mcp.tool()
-def price_share(quote_id: str) -> dict[str, object]:
-    """Generate a shareable URL for a quote on the HWC price calculator. Requires Playwright and an active HWC browser session."""
-
-    def share() -> dict[str, object]:
-        store = get_quote_store()
-        result = store.get(uuid.UUID(quote_id))
-        calculator_url = "https://www.huaweicloud.com/pricing.html"
-        return {
-            "quote_id": quote_id,
-            "share_url": calculator_url,
-            "method": "direct_link",
-            "note": "Pre-filled calculator URL generation requires Playwright automation with an active HWC session. For now, this returns the calculator landing page.",
-            "services": [item.service for item in result.items],
-        }
-
-    return _run_tool_call(share)
-
+    import json
+    print(json.dumps(config, indent=2))
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Huawei Cloud MCP Server")
+    parser.add_argument("--generate-config", action="store_true", help="Generate MCP client configuration")
+    args, unknown = parser.parse_known_args()
+
+    if args.generate_config:
+        generate_config()
+        return
+
     mcp.run(transport="stdio")

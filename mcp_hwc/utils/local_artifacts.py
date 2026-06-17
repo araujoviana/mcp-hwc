@@ -7,7 +7,7 @@ from pathlib import Path
 import tempfile
 import zipfile
 
-from .cli_service import ContainerMount
+from mcp_hwc.cloud_services.cli_service import ContainerMount
 
 
 def resolve_output_path(

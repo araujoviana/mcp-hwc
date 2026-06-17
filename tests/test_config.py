@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from mcp_hwc.config import CloudApiConfig, ConfigError, ObsConfig
-from mcp_hwc.obs_endpoints import OBS_GLOBAL_SERVER, build_obs_server
+from mcp_hwc.core.config import CloudApiConfig, ConfigError, ObsConfig
+from mcp_hwc.cloud_services.obs_endpoints import OBS_GLOBAL_SERVER, build_obs_server
 
 
 @pytest.fixture(autouse=True)

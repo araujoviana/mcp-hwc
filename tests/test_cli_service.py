@@ -2,12 +2,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from mcp_hwc.cli_service import CliService, CliServiceError, ContainerMount
+from mcp_hwc.cloud_services.cli_service import CliService, CliServiceError, ContainerMount
 
 
 def test_resolve_backend_prefers_local_binary(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "mcp_hwc.cli_service.shutil.which",
+        "mcp_hwc.cloud_services.cli_service.shutil.which",
         lambda name: f"/usr/bin/{name}" if name == "kubectl" else None,
     )
 
@@ -18,7 +18,7 @@ def test_resolve_backend_prefers_local_binary(monkeypatch: pytest.MonkeyPatch) -
 
 def test_resolve_backend_falls_back_to_container(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "mcp_hwc.cli_service.shutil.which",
+        "mcp_hwc.cloud_services.cli_service.shutil.which",
         lambda name: "/usr/bin/docker" if name == "docker" else None,
     )
 
@@ -37,10 +37,10 @@ def test_execute_container_builds_mount_command(monkeypatch: pytest.MonkeyPatch,
         return SimpleNamespace(returncode=0, stdout="ok", stderr="")
 
     monkeypatch.setattr(
-        "mcp_hwc.cli_service.shutil.which",
+        "mcp_hwc.cloud_services.cli_service.shutil.which",
         lambda name: "/usr/bin/docker" if name == "docker" else None,
     )
-    monkeypatch.setattr("mcp_hwc.cli_service.subprocess.run", fake_run)
+    monkeypatch.setattr("mcp_hwc.cloud_services.cli_service.subprocess.run", fake_run)
 
     result = CliService().execute_container(
         image="bitnami/kubectl:1.31.0",
@@ -56,7 +56,7 @@ def test_execute_container_builds_mount_command(monkeypatch: pytest.MonkeyPatch,
 
 
 def test_execute_local_raises_on_missing_binary(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("mcp_hwc.cli_service.shutil.which", lambda name: None)
+    monkeypatch.setattr("mcp_hwc.cloud_services.cli_service.shutil.which", lambda name: None)
 
     with pytest.raises(CliServiceError, match="Local CLI not found"):
         CliService().execute_local("helm", ["version"])

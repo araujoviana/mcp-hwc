@@ -1,6 +1,6 @@
 import pytest
 
-from mcp_hwc.regions import normalize_region_input
+from mcp_hwc.core.regions import normalize_region_input
 
 
 def test_normalize_region_input_accepts_region_code() -> None:

@@ -3,8 +3,8 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Literal
 
-from .regions import normalize_region_input
-from .sdk_service import resolve_service_spec
+from mcp_hwc.core.regions import normalize_region_input
+from mcp_hwc.core.sdk_service import resolve_service_spec
 
 Intent = Literal["small", "balanced", "performance"]
 Exposure = Literal["auto", "public", "private", "internal"]

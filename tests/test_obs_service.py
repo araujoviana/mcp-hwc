@@ -3,9 +3,9 @@ from pathlib import Path
 
 import pytest
 
-from mcp_hwc.config import ObsConfig
-from mcp_hwc.obs_endpoints import OBS_GLOBAL_SERVER, build_obs_server
-from mcp_hwc.obs_service import ObsService, ObsServiceError
+from mcp_hwc.core.config import ObsConfig
+from mcp_hwc.cloud_services.obs_endpoints import OBS_GLOBAL_SERVER, build_obs_server
+from mcp_hwc.cloud_services.obs_service import ObsService, ObsServiceError
 
 
 def make_response(

@@ -4,7 +4,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 import uuid
 
-from ..compute import (
+from mcp_hwc.cloud_services.compute import (
     create_ecs_security_group,
     extract_server_ips,
     generate_secret_password,
@@ -12,9 +12,9 @@ from ..compute import (
     resolve_ecs_image,
     resolve_vpc_and_subnet,
 )
-from ..errors import HelperToolError
-from ..polling import wait_for_service_value
-from ..sdk_service import HuaweiCloudSdkService
+from mcp_hwc.core.errors import HelperToolError
+from mcp_hwc.utils.polling import wait_for_service_value
+from mcp_hwc.core.sdk_service import HuaweiCloudSdkService
 
 SdkServiceFactory = Callable[..., HuaweiCloudSdkService]
 

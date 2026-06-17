@@ -1,7 +1,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from mcp_hwc.ssh_service import SshService
+from mcp_hwc.cloud_services.ssh_service import SshService
 
 
 class FakeChannel:

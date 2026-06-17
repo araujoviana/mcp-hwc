@@ -5,8 +5,8 @@ import shutil
 import subprocess
 from urllib.parse import urlparse
 
-from .errors import HelperToolError
-from .sdk_service import HuaweiCloudSdkError, HuaweiCloudSdkService
+from mcp_hwc.core.errors import HelperToolError
+from mcp_hwc.core.sdk_service import HuaweiCloudSdkError, HuaweiCloudSdkService
 
 
 def looks_like_existing_resource_error(message: str) -> bool:

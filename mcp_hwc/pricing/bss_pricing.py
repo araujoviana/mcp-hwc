@@ -16,11 +16,11 @@ from huaweicloudsdkbss.v2.model import (
 )
 from huaweicloudsdkcore.region.region import Region as SdkRegion
 
-from .catalog import resolve_cloud_service_type, resolve_region, resolve_resource_type
-from .models import QuoteItem, QuoteResult, ResourceDescriptor
+from mcp_hwc.pricing.catalog import resolve_cloud_service_type, resolve_region, resolve_resource_type
+from mcp_hwc.pricing.models import QuoteItem, QuoteResult, ResourceDescriptor
 
 if TYPE_CHECKING:
-    from mcp_hwc.config import CloudApiConfig
+    from mcp_hwc.core.config import CloudApiConfig
 
 log = logging.getLogger(__name__)
 
