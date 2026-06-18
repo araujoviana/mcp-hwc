@@ -114,7 +114,7 @@ def wait_for_service_value(
     response_path: str,
     expected_value: object | None = None,
     match_mode: str = "equals",
-    timeout_seconds: int = 900,
+    timeout_seconds: int = 1200,
     interval_seconds: int = DEFAULT_POLL_INTERVAL_SECONDS,
 ) -> dict[str, object]:
     if timeout_seconds <= 0:
