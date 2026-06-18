@@ -314,3 +314,57 @@ def resolve_ecs_flavor(
         preferred_az=availability_zone,
         flavor_hint=flavor_hint,
     )
+
+
+def list_compatible_ecs_flavors(
+    ecs_service: "HuaweiCloudSdkService",
+    *,
+    min_cpu: int | None = None,
+    min_ram_gb: int | None = None,
+    eni_required: bool = False,
+    az: str | None = None,
+) -> list[dict[str, object]]:
+    # Use list_flavors_details to get os_extra_specs
+    # Wait, ecs v2 list_flavors might already have details in some regions or we use ListFlavorsDetails
+    # Checking the SDK, ListFlavorsDetails is often what we want for extra_specs.
+    try:
+        response = ecs_service.call_operation("list_flavors", {"limit": 500})
+    except Exception:
+        # Fallback or try another way if list_flavors doesn't give extra_specs
+        response = ecs_service.call_operation("list_flavors_details", {"limit": 500})
+
+    flavors = response["response"].get("flavors") or []
+    compatible = []
+
+    for f in flavors:
+        vcpus = int(str(f.get("vcpus") or 0))
+        ram = int(f.get("ram") or 0)  # ram is in MB in ECS API
+        ram_gb = ram // 1024
+
+        if min_cpu and vcpus < min_cpu:
+            continue
+        if min_ram_gb and ram_gb < min_ram_gb:
+            continue
+
+        extra_specs = f.get("os_extra_specs") or {}
+
+        if eni_required:
+            sub_eni = extra_specs.get("sub_network_interface_max_num")
+            if sub_eni is None:
+                # Some flavors use different keys or we might need to check if it's a "known" eni flavor
+                # But we follow the report's hint
+                continue
+            try:
+                if int(sub_eni) <= 0:
+                    continue
+            except (ValueError, TypeError):
+                continue
+
+        if az:
+            normal_azs = normal_azs_for_flavor(f)
+            if az not in normal_azs:
+                continue
+
+        compatible.append(f)
+
+    return compatible

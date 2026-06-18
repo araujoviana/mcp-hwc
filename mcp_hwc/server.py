@@ -28,6 +28,7 @@ from mcp_hwc.cloud_services.compute import (
     pick_default_subnet as _pick_default_subnet,
     pick_default_vpc as _pick_default_vpc,
     pick_sfs_availability_zone as _pick_sfs_availability_zone,
+    list_compatible_ecs_flavors as _list_compatible_ecs_flavors,
     resolve_ecs_flavor as _resolve_ecs_flavor,
     resolve_ecs_image as _resolve_ecs_image,
     resolve_vpc_and_subnet as _resolve_vpc_and_subnet,
@@ -250,7 +251,14 @@ def _run_tool_call(call: Callable[[], T]) -> T:
         SshServiceError,
         ValueError,
     ) as exc:
-        raise ToolError(str(exc)) from exc
+        msg = str(exc)
+        # Enhance common flavor compatibility errors
+        if "subeni quota is 0" in msg or "Eni network is not supported" in msg:
+            msg += (
+                ". Try using a different flavor that supports ENI. "
+                "You can use `ecs_list_compatible_flavors` with `eni_required=True` to find one."
+            )
+        raise ToolError(msg) from exc
 
 
 def _resolve_sdk_region(
@@ -409,6 +417,76 @@ register_pricing_tools(mcp)
 
 
 @mcp.tool()
+def ecs_list_compatible_flavors(
+    region: str,
+    min_cpu: int | None = None,
+    min_ram_gb: int | None = None,
+    eni_required: bool = False,
+    availability_zone: str | None = None,
+    project_id: str | None = None,
+    endpoint: str | None = None,
+) -> dict[str, object]:
+    """List ECS flavors filtered by CPU, RAM, ENI support, and availability zone."""
+    return _run_tool_call(
+        lambda: {
+            "region": region,
+            "flavors": _list_compatible_ecs_flavors(
+                get_sdk_service(
+                    "ecs",
+                    region=region,
+                    project_id=project_id,
+                    endpoint=endpoint,
+                ),
+                min_cpu=min_cpu,
+                min_ram_gb=min_ram_gb,
+                eni_required=eni_required,
+                az=availability_zone,
+            ),
+        }
+    )
+
+
+@mcp.tool()
+def cce_monitor_provisioning(
+    region: str,
+    resource_type: str,
+    resource_id: str,
+    cluster_id: str | None = None,
+    timeout_seconds: int = 1800,
+    project_id: str | None = None,
+    endpoint: str | None = None,
+) -> dict[str, object]:
+    """Monitor CCE cluster, node pool, or node provisioning status until Active/Available."""
+    return _run_tool_call(
+        lambda: _wait_for_service_value(
+            get_sdk_service(
+                "cce",
+                region=region,
+                project_id=project_id,
+                endpoint=endpoint,
+            ),
+            operation={
+                "cluster": "show_cluster",
+                "node_pool": "show_node_pool",
+                "node": "show_node",
+            }[resource_type],
+            parameters={
+                "cluster": {"cluster_id": resource_id},
+                "node_pool": {"cluster_id": cluster_id, "node_pool_id": resource_id},
+                "node": {"cluster_id": cluster_id, "node_id": resource_id},
+            }[resource_type],
+            response_path={
+                "cluster": "response.status.phase",
+                "node_pool": "response.status.phase",
+                "node": "response.status.phase",
+            }[resource_type],
+            expected_value="Available" if resource_type == "cluster" else "Active",
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+
+@mcp.tool()
 def huaweicloud_list_services(query: str | None = None) -> dict[str, object]:
     """List supported Huawei Cloud services, aliases, API versions, and provisioning hints."""
     return _run_tool_call(lambda: _list_supported_services_for_mcp(query=query))
@@ -498,21 +576,48 @@ def huaweicloud_call_operation(
     domain_id: str | None = None,
     endpoint: str | None = None,
     api_version: str | None = None,
+    wait_for_completion: bool = False,
+    timeout_seconds: int = 1200,
 ) -> dict[str, object]:
     """Execute any supported Huawei Cloud SDK operation using a service name or alias."""
-    return _run_tool_call(
-        lambda: _get_resolved_sdk_service(
+
+    def call_and_maybe_wait() -> dict[str, object]:
+        resolved_service = _get_resolved_sdk_service(
             service_name,
             api_version=api_version,
             region=_resolve_sdk_region(region, parameters, endpoint),
             project_id=project_id,
             domain_id=domain_id,
             endpoint=endpoint,
-        ).call_operation(
+        )
+        result = resolved_service.call_operation(
             operation=operation,
             parameters=parameters,
         )
-    )
+
+        if not wait_for_completion:
+            return result
+
+        # Detect Job ID for common async operations
+        # ECS/CCE/VPC often return job_id or cluster_id/node_pool_id that might need polling
+        # This is a generic poller attempt for job_id
+        response_body = result.get("response") or {}
+        job_id = response_body.get("job_id") or response_body.get("jobId")
+
+        if not job_id:
+            return result
+
+        # If it's a job, wait for it
+        return _wait_for_service_value(
+            resolved_service,
+            operation="show_job" if "show_job" in resolved_service._operations() else "show_job_status",
+            parameters={"job_id": job_id},
+            response_path="response.status",
+            expected_value="SUCCESS",
+            timeout_seconds=timeout_seconds,
+        )
+
+    return _run_tool_call(call_and_maybe_wait)
 
 
 @mcp.tool()
@@ -528,7 +633,7 @@ def huaweicloud_wait_for_condition(
     domain_id: str | None = None,
     endpoint: str | None = None,
     api_version: str | None = None,
-    timeout_seconds: int = 600,
+    timeout_seconds: int = 1200,
     interval_seconds: int = _DEFAULT_POLL_INTERVAL_SECONDS,
 ) -> dict[str, object]:
     """Poll a Huawei Cloud SDK operation until a response field matches a condition."""
