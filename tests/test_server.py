@@ -4,8 +4,14 @@ import json
 from types import SimpleNamespace
 import zipfile
 
+import os
 import pytest
 from mcp.server.fastmcp.exceptions import ToolError
+
+@pytest.fixture(autouse=True)
+def setup_env(monkeypatch):
+    monkeypatch.setenv("HWC_AK", "fake-ak")
+    monkeypatch.setenv("HWC_SK", "fake-sk")
 from mcp.shared.memory import create_connected_server_and_client_session
 
 from mcp_hwc import server

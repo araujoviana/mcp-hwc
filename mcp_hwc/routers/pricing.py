@@ -25,13 +25,18 @@ async def price_quote(
     resources: list[dict[str, object]],
     region: str | None = None,
 ) -> dict[str, object]:
-    """Get pricing/quotation for Huawei Cloud resources. Each resource dict needs: service, spec, region, period_type. Optional: period_num, quantity."""
+    """Get pricing/quotation for Huawei Cloud resources. Each resource dict needs: service, spec, region, period_type. Optional: period_num, quantity, size."""
 
     descs = []
     for r in resources:
         r_region = str(r.get("region", "") or region or "")
         if not r_region:
             raise ToolError("region is required (per-resource or top-level)")
+
+        size = r.get("size")
+        if size is not None:
+            size = float(size)
+
         descs.append(ResourceDescriptor(
             service=str(r["service"]),
             spec=str(r["spec"]),
@@ -39,6 +44,7 @@ async def price_quote(
             period_type=str(r["period_type"]),
             period_num=int(r.get("period_num", 1)),
             quantity=int(r.get("quantity", 1)),
+            size=size,
         ))
 
     backend = get_bss_pricing_backend()

@@ -26,11 +26,11 @@ log = logging.getLogger(__name__)
 
 
 class PricingNotAvailable(RuntimeError):
-    """Raised when BSS SDK cannot price a resource (triggers Playwright fallback)."""
+    """Exception raised when the BSS SDK is unable to retrieve pricing information."""
 
 
 class BssAccessDenied(PricingNotAvailable):
-    """Raised when BSS API returns 403 — account lacks BSS access."""
+    """Exception raised when the BSS API returns a 403 Forbidden error, indicating insufficient permissions."""
 
 
 class BssPricingBackend:
@@ -120,6 +120,7 @@ class BssPricingBackend:
                     period_type=desc.period_type,
                     period_num=desc.period_num,
                     quantity=desc.quantity,
+                    size=desc.size,
                     unit_price=amount,
                     currency="USD",
                 )
@@ -167,6 +168,7 @@ class BssPricingBackend:
                     period_type="on_demand",
                     period_num=1,
                     quantity=desc.quantity,
+                    size=desc.size,
                     unit_price=amount,
                     currency="USD",
                 )
@@ -186,29 +188,40 @@ class BssPricingBackend:
 
     @staticmethod
     def _build_period_product_info(desc: ResourceDescriptor, index: int) -> PeriodProductInfo:
-        return PeriodProductInfo(
-            id=str(index),
-            cloud_service_type=resolve_cloud_service_type(desc.service),
-            resource_type=resolve_resource_type(desc.service),
-            resource_spec=desc.spec,
-            region=resolve_region(desc.region),
-            period_type=BssPricingBackend._map_period_type(desc.period_type),
-            period_num=desc.period_num,
-            subscription_num=desc.quantity,
-        )
+        kwargs = {
+            "id": str(index),
+            "cloud_service_type": resolve_cloud_service_type(desc.service),
+            "resource_type": resolve_resource_type(desc.service),
+            "resource_spec": desc.spec,
+            "region": resolve_region(desc.region),
+            "period_type": BssPricingBackend._map_period_type(desc.period_type),
+            "period_num": desc.period_num,
+            "subscription_num": desc.quantity,
+        }
+        if desc.size is not None:
+            kwargs["resource_size"] = int(desc.size)
+            kwargs["size_measure_id"] = 17  # GB
+        return PeriodProductInfo(**kwargs)
 
     @staticmethod
     def _build_demand_product_info(desc: ResourceDescriptor, index: int) -> DemandProductInfo:
-        return DemandProductInfo(
-            id=str(index),
-            cloud_service_type=resolve_cloud_service_type(desc.service),
-            resource_type=resolve_resource_type(desc.service),
-            resource_spec=desc.spec,
-            region=resolve_region(desc.region),
-            usage_value=1.0,
-            usage_measure_id=1,
-            subscription_num=desc.quantity,
-        )
+        kwargs = {
+            "id": str(index),
+            "cloud_service_type": resolve_cloud_service_type(desc.service),
+            "resource_type": resolve_resource_type(desc.service),
+            "resource_spec": desc.spec,
+            "region": resolve_region(desc.region),
+            "subscription_num": desc.quantity,
+        }
+        if desc.size is not None:
+            kwargs["resource_size"] = int(desc.size)
+            kwargs["size_measure_id"] = 17  # GB
+            kwargs["usage_value"] = float(desc.size)
+            kwargs["usage_measure_id"] = 17  # GB
+        else:
+            kwargs["usage_value"] = 1.0
+            kwargs["usage_measure_id"] = 1  # Standard unit
+        return DemandProductInfo(**kwargs)
 
     def discover_specs(
         self,
@@ -249,7 +262,6 @@ class BssPricingBackend:
             if "CBC.0156" in msg or "403" in msg:
                 raise BssAccessDenied(
                     "BSS API access denied (CBC.0156). "
-                    "This account may not have BSS pricing API enabled. "
-                    "Falling back to web pricing."
+                    "The account may not have the BSS pricing API enabled."
                 ) from exc
             raise PricingNotAvailable(f"BSS API error: {msg}") from exc

@@ -37,7 +37,7 @@ SERVICE_HASH_MAP: dict[str, str] = {
 
 
 class WebPricingBackend:
-    """Playwright-based pricing fallback. Scrapes the HWC price calculator."""
+    """Provides pricing information by scraping the Huawei Cloud price calculator using Playwright."""
 
     def __init__(self, headless: bool = True) -> None:
         self._headless = headless
@@ -59,8 +59,8 @@ class WebPricingBackend:
 
         if not items:
             raise RuntimeError(
-                "Web pricing could not price any resources. "
-                "The HWC calculator may have changed its structure."
+                "Web pricing could not retrieve any resource prices. "
+                "The Huawei Cloud calculator structure may have changed."
             )
         return QuoteResult(
             quote_id=uuid.uuid4(),

@@ -1,19 +1,6 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
-from mcp_hwc.server import (
-    _run_tool_call,
-    _get_resolved_sdk_service,
-    _prepare_kubeconfig_for_backend,
-    _execute_cli_tool,
-    _resolve_output_path,
-    _serialize_kubeconfig_document,
-    _resolve_existing_path,
-    _parse_json_output,
-    _prepare_chart_reference,
-    _prepare_helm_values_file,
-    _format_cli_value,
-    get_cli_service,
-)
+import mcp_hwc.server as server
 from mcp_hwc.cloud_services.cli_service import DEFAULT_TOOL_IMAGES, ContainerMount
 from mcp_hwc.schemas.operations import K8sApplySchema
 
@@ -35,7 +22,7 @@ def cce_get_kubeconfig(
         if duration <= 0:
             raise ValueError("duration must be greater than zero")
 
-        service = _get_resolved_sdk_service(
+        service = server._get_resolved_sdk_service(
             "cce",
             api_version=api_version,
             region=region,
@@ -50,12 +37,12 @@ def cce_get_kubeconfig(
             },
         )
 
-        output_path = _resolve_output_path(
+        output_path = server._resolve_output_path(
             destination_path,
             prefix=f"{cluster_id[:8]}-",
             suffix=".kubeconfig.json",
         )
-        kubeconfig_text = _serialize_kubeconfig_document(result["response"])
+        kubeconfig_text = server._serialize_kubeconfig_document(result["response"])
         output_path.write_text(kubeconfig_text, encoding="utf-8")
         try:
             output_path.chmod(0o600)
@@ -78,7 +65,7 @@ def cce_get_kubeconfig(
             "written": True,
         }
 
-    return _run_tool_call(export_kubeconfig)
+    return server._run_tool_call(export_kubeconfig)
 
 def k8s_apply_manifest(
     args: K8sApplySchema
@@ -90,12 +77,12 @@ def k8s_apply_manifest(
             raise ValueError("Provide exactly one of manifest or manifest_path")
 
         resolved_image = args.container_image or DEFAULT_TOOL_IMAGES.get("kubectl")
-        backend = get_cli_service().resolve_backend(
+        backend = server.get_cli_service().resolve_backend(
             "kubectl",
             backend=args.execution_backend,
             container_image=resolved_image,
         )
-        kubeconfig_args, mounts = _prepare_kubeconfig_for_backend(
+        kubeconfig_args, mounts = server._prepare_kubeconfig_for_backend(
             args.kubeconfig_path,
             context=args.context,
             backend=backend,
@@ -104,7 +91,7 @@ def k8s_apply_manifest(
         args_list = [*kubeconfig_args, "apply", "-f"]
         input_text = args.manifest
         if args.manifest_path:
-            resolved_manifest_path = _resolve_existing_path(args.manifest_path)
+            resolved_manifest_path = server._resolve_existing_path(args.manifest_path)
             if backend == "container":
                 mounted_manifest_path = "/tmp/mcp-hwc-manifest.yaml"
                 mounts.append(
@@ -128,7 +115,7 @@ def k8s_apply_manifest(
         if args.server_side:
             args_list.append("--server-side")
 
-        result = _execute_cli_tool(
+        result = server._execute_cli_tool(
             "kubectl",
             args_list,
             execution_backend=backend,
@@ -144,7 +131,7 @@ def k8s_apply_manifest(
             "applied": True,
         }
 
-    return _run_tool_call(apply_manifest)
+    return server._run_tool_call(apply_manifest)
 
 def k8s_get_resources(
     kubeconfig_path: str,
@@ -162,12 +149,12 @@ def k8s_get_resources(
 
     def get_resources() -> dict[str, object]:
         resolved_image = container_image or DEFAULT_TOOL_IMAGES.get("kubectl")
-        backend = get_cli_service().resolve_backend(
+        backend = server.get_cli_service().resolve_backend(
             "kubectl",
             backend=execution_backend,
             container_image=resolved_image,
         )
-        kubeconfig_args, mounts = _prepare_kubeconfig_for_backend(
+        kubeconfig_args, mounts = server._prepare_kubeconfig_for_backend(
             kubeconfig_path,
             context=context,
             backend=backend,
@@ -183,7 +170,7 @@ def k8s_get_resources(
         if field_selector:
             args.extend(["--field-selector", field_selector])
 
-        result = _execute_cli_tool(
+        result = server._execute_cli_tool(
             "kubectl",
             args,
             execution_backend=backend,
@@ -197,10 +184,10 @@ def k8s_get_resources(
             "namespace": namespace,
             "all_namespaces": all_namespaces,
             "output_format": output,
-            "parsed_output": _parse_json_output(result["stdout"]) if output == "json" else None,
+            "parsed_output": server._parse_json_output(result["stdout"]) if output == "json" else None,
         }
 
-    return _run_tool_call(get_resources)
+    return server._run_tool_call(get_resources)
 
 def k8s_wait(
     kubeconfig_path: str,
@@ -219,12 +206,12 @@ def k8s_wait(
             raise ValueError("timeout_seconds must be greater than zero")
 
         resolved_image = container_image or DEFAULT_TOOL_IMAGES.get("kubectl")
-        backend = get_cli_service().resolve_backend(
+        backend = server.get_cli_service().resolve_backend(
             "kubectl",
             backend=execution_backend,
             container_image=resolved_image,
         )
-        kubeconfig_args, mounts = _prepare_kubeconfig_for_backend(
+        kubeconfig_args, mounts = server._prepare_kubeconfig_for_backend(
             kubeconfig_path,
             context=context,
             backend=backend,
@@ -242,7 +229,7 @@ def k8s_wait(
         if namespace:
             args.extend(["-n", namespace])
 
-        result = _execute_cli_tool(
+        result = server._execute_cli_tool(
             "kubectl",
             args,
             execution_backend=backend,
@@ -258,7 +245,7 @@ def k8s_wait(
             "wait_satisfied": True,
         }
 
-    return _run_tool_call(wait_for_resource)
+    return server._run_tool_call(wait_for_resource)
 
 def k8s_logs(
     kubeconfig_path: str,
@@ -279,12 +266,12 @@ def k8s_logs(
             raise ValueError("tail_lines must be greater than zero")
 
         resolved_image = container_image or DEFAULT_TOOL_IMAGES.get("kubectl")
-        backend = get_cli_service().resolve_backend(
+        backend = server.get_cli_service().resolve_backend(
             "kubectl",
             backend=execution_backend,
             container_image=resolved_image,
         )
-        kubeconfig_args, mounts = _prepare_kubeconfig_for_backend(
+        kubeconfig_args, mounts = server._prepare_kubeconfig_for_backend(
             kubeconfig_path,
             context=context,
             backend=backend,
@@ -300,7 +287,7 @@ def k8s_logs(
         if previous:
             args.append("--previous")
 
-        result = _execute_cli_tool(
+        result = server._execute_cli_tool(
             "kubectl",
             args,
             execution_backend=backend,
@@ -316,7 +303,7 @@ def k8s_logs(
             "logs": result["stdout"],
         }
 
-    return _run_tool_call(get_logs)
+    return server._run_tool_call(get_logs)
 
 def k8s_exec(
     kubeconfig_path: str,
@@ -337,12 +324,12 @@ def k8s_exec(
             raise ValueError("command cannot be empty")
 
         resolved_image = container_image or DEFAULT_TOOL_IMAGES.get("kubectl")
-        backend = get_cli_service().resolve_backend(
+        backend = server.get_cli_service().resolve_backend(
             "kubectl",
             backend=execution_backend,
             container_image=resolved_image,
         )
-        kubeconfig_args, mounts = _prepare_kubeconfig_for_backend(
+        kubeconfig_args, mounts = server._prepare_kubeconfig_for_backend(
             kubeconfig_path,
             context=context,
             backend=backend,
@@ -353,7 +340,7 @@ def k8s_exec(
             args.extend(["-c", container])
         args.extend(["--", "sh", "-lc", command])
 
-        result = _execute_cli_tool(
+        result = server._execute_cli_tool(
             "kubectl",
             args,
             execution_backend=backend,
@@ -368,7 +355,7 @@ def k8s_exec(
             "container": container,
         }
 
-    return _run_tool_call(exec_in_pod)
+    return server._run_tool_call(exec_in_pod)
 
 def helm_install(
     kubeconfig_path: str,
@@ -394,20 +381,20 @@ def helm_install(
             raise ValueError("timeout_seconds must be greater than zero")
 
         resolved_image = container_image or DEFAULT_TOOL_IMAGES.get("helm")
-        backend = get_cli_service().resolve_backend(
+        backend = server.get_cli_service().resolve_backend(
             "helm",
             backend=execution_backend,
             container_image=resolved_image,
         )
-        kubeconfig_args, mounts = _prepare_kubeconfig_for_backend(
+        kubeconfig_args, mounts = server._prepare_kubeconfig_for_backend(
             kubeconfig_path,
             context=context,
             backend=backend,
         )
-        effective_chart, chart_mounts = _prepare_chart_reference(chart, backend=backend)
+        effective_chart, chart_mounts = server._prepare_chart_reference(chart, backend=backend)
         mounts.extend(chart_mounts)
 
-        values_path, delete_values_file = _prepare_helm_values_file(values, values_file)
+        values_path, delete_values_file = server._prepare_helm_values_file(values, values_file)
         try:
             args = [*kubeconfig_args, "install", release_name, effective_chart]
             if namespace:
@@ -430,9 +417,9 @@ def helm_install(
                 else:
                     args.extend(["--values", str(values_path)])
             for key, value in sorted((set_values or {}).items()):
-                args.extend(["--set", f"{key}={_format_cli_value(value)}"])
+                args.extend(["--set", f"{key}={server._format_cli_value(value)}"])
 
-            result = _execute_cli_tool(
+            result = server._execute_cli_tool(
                 "helm",
                 args,
                 execution_backend=backend,
@@ -451,7 +438,7 @@ def helm_install(
             if values_path is not None and delete_values_file:
                 values_path.unlink(missing_ok=True)
 
-    return _run_tool_call(install_chart)
+    return server._run_tool_call(install_chart)
 
 def helm_upgrade(
     kubeconfig_path: str,
@@ -477,20 +464,20 @@ def helm_upgrade(
             raise ValueError("timeout_seconds must be greater than zero")
 
         resolved_image = container_image or DEFAULT_TOOL_IMAGES.get("helm")
-        backend = get_cli_service().resolve_backend(
+        backend = server.get_cli_service().resolve_backend(
             "helm",
             backend=execution_backend,
             container_image=resolved_image,
         )
-        kubeconfig_args, mounts = _prepare_kubeconfig_for_backend(
+        kubeconfig_args, mounts = server._prepare_kubeconfig_for_backend(
             kubeconfig_path,
             context=context,
             backend=backend,
         )
-        effective_chart, chart_mounts = _prepare_chart_reference(chart, backend=backend)
+        effective_chart, chart_mounts = server._prepare_chart_reference(chart, backend=backend)
         mounts.extend(chart_mounts)
 
-        values_path, delete_values_file = _prepare_helm_values_file(values, values_file)
+        values_path, delete_values_file = server._prepare_helm_values_file(values, values_file)
         try:
             args = [*kubeconfig_args, "upgrade", release_name, effective_chart]
             if install_if_missing:
@@ -513,9 +500,9 @@ def helm_upgrade(
                 else:
                     args.extend(["--values", str(values_path)])
             for key, value in sorted((set_values or {}).items()):
-                args.extend(["--set", f"{key}={_format_cli_value(value)}"])
+                args.extend(["--set", f"{key}={server._format_cli_value(value)}"])
 
-            result = _execute_cli_tool(
+            result = server._execute_cli_tool(
                 "helm",
                 args,
                 execution_backend=backend,
@@ -534,7 +521,7 @@ def helm_upgrade(
             if values_path is not None and delete_values_file:
                 values_path.unlink(missing_ok=True)
 
-    return _run_tool_call(upgrade_chart)
+    return server._run_tool_call(upgrade_chart)
 
 def helm_uninstall(
     kubeconfig_path: str,
@@ -553,12 +540,12 @@ def helm_uninstall(
             raise ValueError("timeout_seconds must be greater than zero")
 
         resolved_image = container_image or DEFAULT_TOOL_IMAGES.get("helm")
-        backend = get_cli_service().resolve_backend(
+        backend = server.get_cli_service().resolve_backend(
             "helm",
             backend=execution_backend,
             container_image=resolved_image,
         )
-        kubeconfig_args, mounts = _prepare_kubeconfig_for_backend(
+        kubeconfig_args, mounts = server._prepare_kubeconfig_for_backend(
             kubeconfig_path,
             context=context,
             backend=backend,
@@ -570,7 +557,7 @@ def helm_uninstall(
         if wait:
             args.extend(["--wait", "--timeout", f"{timeout_seconds}s"])
 
-        result = _execute_cli_tool(
+        result = server._execute_cli_tool(
             "helm",
             args,
             execution_backend=backend,
@@ -585,7 +572,7 @@ def helm_uninstall(
             "uninstalled": True,
         }
 
-    return _run_tool_call(uninstall_chart)
+    return server._run_tool_call(uninstall_chart)
 
 def register_k8s_tools(mcp: FastMCP):
     mcp.tool()(cce_get_kubeconfig)

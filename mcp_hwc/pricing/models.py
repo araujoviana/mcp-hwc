@@ -18,6 +18,7 @@ class ResourceDescriptor:
     period_type: str
     period_num: int = 1
     quantity: int = 1
+    size: float | None = None
 
     def __post_init__(self) -> None:
         if self.period_type not in _VALID_PERIOD_TYPES:
@@ -40,6 +41,7 @@ class QuoteItem:
     quantity: int
     unit_price: float
     currency: str
+    size: float | None = None
 
     @property
     def total_price(self) -> float:
@@ -53,6 +55,7 @@ class QuoteItem:
             "period_type": self.period_type,
             "period_num": self.period_num,
             "quantity": self.quantity,
+            "size": self.size,
             "unit_price": self.unit_price,
             "total_price": self.total_price,
             "currency": self.currency,
