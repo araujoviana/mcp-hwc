@@ -81,6 +81,7 @@ class CliService:
         env: Mapping[str, str] | None = None,
         input_text: str | None = None,
         working_directory: str | Path | None = None,
+        timeout_seconds: int = 300,
     ) -> dict[str, object]:
         binary = self.resolve_local_binary(tool_name)
         command = [binary, *args]
@@ -90,6 +91,7 @@ class CliService:
             env=env,
             input_text=input_text,
             working_directory=working_directory,
+            timeout_seconds=timeout_seconds,
         )
 
     def execute_container(
@@ -103,6 +105,7 @@ class CliService:
         working_directory: str | Path | None = None,
         mounts: Sequence[ContainerMount] | None = None,
         network: str | None = None,
+        timeout_seconds: int = 300,
     ) -> dict[str, object]:
         runtime = self.resolve_container_runtime()
         command = [runtime, "run", "--rm", "-i", "--entrypoint", entrypoint]
@@ -131,6 +134,7 @@ class CliService:
             env=None,
             input_text=input_text,
             working_directory=None,
+            timeout_seconds=timeout_seconds,
         )
 
     def _run_subprocess(
@@ -141,6 +145,7 @@ class CliService:
         env: Mapping[str, str] | None,
         input_text: str | None,
         working_directory: str | Path | None,
+        timeout_seconds: int = 300,
     ) -> dict[str, object]:
         cwd = None
         if working_directory is not None:
@@ -155,7 +160,13 @@ class CliService:
                 check=False,
                 cwd=cwd,
                 env=dict(env) if env else None,
+                timeout=timeout_seconds,
             )
+        except subprocess.TimeoutExpired as exc:
+            joined_command = " ".join(command)
+            raise CliServiceError(
+                f"{backend.capitalize()} command timed out after {timeout_seconds}s: {joined_command}"
+            ) from exc
         except OSError as exc:
             joined_command = " ".join(command)
             raise CliServiceError(

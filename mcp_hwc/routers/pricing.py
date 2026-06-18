@@ -154,9 +154,14 @@ def price_share(quote_id: str) -> dict[str, object]:
     return _run_tool_call(share)
 
 def register_pricing_tools(mcp: FastMCP):
-    mcp.tool()(price_quote)
-    mcp.tool()(price_discover)
-    mcp.tool()(price_export)
-    mcp.tool()(price_list_quotes)
-    mcp.tool()(price_get_quote)
-    mcp.tool()(price_share)
+    from mcp_hwc.core.tool_manager import tool_manager, Toolset
+
+    ts = Toolset("pricing", "Tools for Huawei Cloud resource pricing and cost estimation.")
+    ts.add_tool(price_quote)
+    ts.add_tool(price_discover)
+    ts.add_tool(price_export)
+    ts.add_tool(price_list_quotes)
+    ts.add_tool(price_get_quote)
+    ts.add_tool(price_share)
+
+    tool_manager.register_toolset(ts)

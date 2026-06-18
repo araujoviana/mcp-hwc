@@ -54,3 +54,11 @@ class K8sApplySchema(BaseModel):
         if bool(self.manifest) == bool(self.manifest_path):
             raise ValueError("Provide exactly one of 'manifest' or 'manifest_path'")
         return self
+
+class K8sExecuteSchema(BaseModel):
+    kubeconfig_path: str = Field(..., description="Local path to the kubeconfig file used for authentication.")
+    command: str = Field(..., description="The arbitrary kubectl command to run (e.g., 'get pods', 'describe node').")
+    namespace: Optional[str] = Field(None, description="Kubernetes namespace to run the command in.")
+    context: Optional[str] = Field(None, description="Kubeconfig context name to use.")
+    execution_backend: str = Field("auto", description="Execution backend: 'auto' (preferred), 'local' (requires kubectl installed), or 'container' (requires Docker/Podman).")
+    container_image: Optional[str] = Field(None, description="Custom container image for kubectl if using 'container' backend.")

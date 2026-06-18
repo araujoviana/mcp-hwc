@@ -113,14 +113,16 @@ _MCP_INSTRUCTIONS = (
     "`ecs_create_vm` first; it resolves the usual VPC, subnet, image, flavor, security "
     "group, and create payload from minimal input. Use raw SDK tools only for uncommon "
     "operations or when a workflow helper cannot express the request.\n\n"
-    "When a service exposes an SSH endpoint, use `ssh_execute`, `ssh_upload_file`, "
-    "and `ssh_download_file` to finish post-provisioning tasks such as package "
-    "installation or configuration management. Use OBS file-transfer tools for "
-    "binary uploads and downloads. Use `swr_upload_image` to push local container "
-    "images to SWR, `functiongraph_deploy_code` to zip and upload local function "
-    "source, `cce_get_kubeconfig` to export cluster access config, `k8s_*` tools "
-    "for kubectl-style operations, `helm_*` tools for chart management, and "
-    "`lts_query_logs` to resolve LTS groups or streams and filter logs. Do not poll "
+    "To save context tokens, many specialized tools (OBS, K8s, Helm, SSH, Pricing) "
+    "are organized into toolsets. Use `list_available_toolsets` to see what is "
+    "available and `use_toolset` to load them when needed. For example, if you "
+    "need to manage an OBS bucket, call `use_toolset(toolset_name='obs')` first.\n\n"
+    "When a service exposes an SSH endpoint, load the `ssh` toolset and use its tools "
+    "to finish post-provisioning tasks. Use `obs` toolset for file-transfer. "
+    "Use `swr_upload_image` to push local container images to SWR, "
+    "`functiongraph_deploy_code` to zip and upload local function source, "
+    "load the `k8s` toolset to use `cce_get_kubeconfig` and `k8s_execute` or `helm_*` tools, "
+    "and use `lts_query_logs` to resolve LTS groups or streams and filter logs. Do not poll "
     "after creates by default; prefer returning provider job IDs or resource IDs and "
     "only use `huaweicloud_wait_for_condition` when the next step requires the final "
     "state. When polling is required, use sparse intervals of at least 60 seconds, "
@@ -259,6 +261,15 @@ def _run_tool_call(call: Callable[[], T]) -> T:
                 ". Try using a different flavor that supports ENI. "
                 "You can use `ecs_list_compatible_flavors` with `eni_required=True` to find one."
             )
+        elif "Local CLI not found" in msg:
+            msg += ". This tool requires a local binary that is missing. Try setting `execution_backend='container'` if you have Docker/Podman installed."
+        elif "No container runtime found" in msg:
+            msg += ". This tool tried to use a container but no runtime (docker, podman, etc.) was found. Try installing one or use `execution_backend='local'` if the tool is installed on your host."
+        elif "kubeconfig" in msg.lower() and ("not found" in msg.lower() or "permission denied" in msg.lower()):
+            msg += ". Please ensure the `kubeconfig_path` is correct and accessible by the MCP server."
+        elif "AuthenticationException" in msg or "permission denied" in msg.lower():
+            msg += ". Please check your credentials (AK/SK, SSH password, or kubeconfig)."
+
         raise ToolError(msg) from exc
 
 
@@ -397,7 +408,7 @@ from mcp_hwc.routers.k8s import (
     k8s_get_resources,
     k8s_wait,
     k8s_logs,
-    k8s_exec,
+    k8s_execute,
     helm_install,
     helm_upgrade,
     helm_uninstall,
@@ -413,10 +424,26 @@ from mcp_hwc.routers.pricing import (
     register_pricing_tools,
 )
 
-# Register tools with the MCP server
+from mcp_hwc.core.tool_manager import tool_manager, Toolset
+
+# Register toolsets (this fills the tool_manager)
 register_obs_tools(mcp)
 register_k8s_tools(mcp)
 register_pricing_tools(mcp)
+
+# Register SSH toolset (defined later)
+
+# Core "Dynamic Context" Tools
+@mcp.tool()
+def list_available_toolsets() -> list[dict[str, str]]:
+    """List available toolsets that can be dynamically loaded."""
+    return tool_manager.list_available_toolsets()
+
+
+@mcp.tool()
+async def use_toolset(toolset_name: str) -> str:
+    """Load a specific toolset to expose its tools to the MCP client."""
+    return await tool_manager.load_toolset(mcp, toolset_name)
 
 
 @mcp.tool()
@@ -1050,7 +1077,6 @@ def swr_upload_image(
     )
 
 
-@mcp.tool()
 def ssh_execute(
     host: str,
     username: str,
@@ -1078,7 +1104,6 @@ def ssh_execute(
     )
 
 
-@mcp.tool()
 def ssh_upload_file(
     host: str,
     username: str,
@@ -1106,7 +1131,6 @@ def ssh_upload_file(
     )
 
 
-@mcp.tool()
 def ssh_download_file(
     host: str,
     username: str,
@@ -1220,6 +1244,18 @@ def _register_sdk_tools(service_name: str) -> None:
 
 for _service_name in SERVICE_SPECS:
     _register_sdk_tools(_service_name)
+
+
+def _register_ssh_toolset():
+    ssh_ts = Toolset("ssh", "Tools for SSH-based remote execution and file transfer.")
+    ssh_ts.add_tool(ssh_execute)
+    ssh_ts.add_tool(ssh_upload_file)
+    ssh_ts.add_tool(ssh_download_file)
+    tool_manager.register_toolset(ssh_ts)
+
+
+_register_ssh_toolset()
+
 
 def generate_config():
     python_path = sys.executable

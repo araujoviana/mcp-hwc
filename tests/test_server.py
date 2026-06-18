@@ -1065,9 +1065,12 @@ def test_ssh_execute_calls_service(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.anyio
 async def test_mcp_session_can_call_obs_tool(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(server, "get_obs_service", lambda: FakeObsService())
+    from mcp_hwc.server import mcp as server_mcp
+    from mcp_hwc.core.tool_manager import tool_manager
+    await tool_manager.load_toolset(server_mcp, "obs", force=True)
 
     async with create_connected_server_and_client_session(
-        server.mcp, raise_exceptions=True
+        server_mcp, raise_exceptions=True
     ) as session:
         result = await session.call_tool("obs_list_buckets", {})
 
@@ -1175,9 +1178,12 @@ async def test_mcp_session_can_call_ecs_create_vm(monkeypatch: pytest.MonkeyPatc
 @pytest.mark.anyio
 async def test_mcp_session_can_call_ssh_tool(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(server, "get_ssh_service", lambda: FakeSshService())
+    from mcp_hwc.server import mcp as server_mcp
+    from mcp_hwc.core.tool_manager import tool_manager
+    await tool_manager.load_toolset(server_mcp, "ssh", force=True)
 
     async with create_connected_server_and_client_session(
-        server.mcp, raise_exceptions=True
+        server_mcp, raise_exceptions=True
     ) as session:
         result = await session.call_tool(
             "ssh_execute",

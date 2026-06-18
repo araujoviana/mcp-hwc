@@ -84,10 +84,14 @@ def test_quote_export_terraform() -> None:
     assert "100.0" in tf_text
 
 
-def test_pricing_tools_registered_in_mcp() -> None:
+@pytest.mark.anyio
+async def test_pricing_tools_registered_in_mcp() -> None:
     from mcp_hwc.server import mcp
+    from mcp_hwc.core.tool_manager import tool_manager
 
-    tool_names = {t.name for t in mcp._tool_manager.list_tools()}
+    await tool_manager.load_toolset(mcp, "pricing", force=True)
+
+    tool_names = {t.name for t in await mcp.list_tools()}
     expected = {
         "price_quote",
         "price_discover",

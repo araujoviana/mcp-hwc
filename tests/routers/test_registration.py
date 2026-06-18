@@ -8,6 +8,8 @@ from mcp_hwc.routers.pricing import register_pricing_tools
 async def test_obs_tools_registration():
     mcp = FastMCP("test")
     register_obs_tools(mcp)
+    from mcp_hwc.core.tool_manager import tool_manager
+    await tool_manager.load_toolset(mcp, "obs")
     tools = await mcp.list_tools()
     tool_names = [t.name for t in tools]
     assert "obs_list_buckets" in tool_names
@@ -18,6 +20,8 @@ async def test_obs_tools_registration():
 async def test_k8s_tools_registration():
     mcp = FastMCP("test")
     register_k8s_tools(mcp)
+    from mcp_hwc.core.tool_manager import tool_manager
+    await tool_manager.load_toolset(mcp, "k8s")
     tools = await mcp.list_tools()
     tool_names = [t.name for t in tools]
     assert "cce_get_kubeconfig" in tool_names
@@ -28,6 +32,8 @@ async def test_k8s_tools_registration():
 async def test_pricing_tools_registration():
     mcp = FastMCP("test")
     register_pricing_tools(mcp)
+    from mcp_hwc.core.tool_manager import tool_manager
+    await tool_manager.load_toolset(mcp, "pricing")
     tools = await mcp.list_tools()
     tool_names = [t.name for t in tools]
     assert "price_quote" in tool_names

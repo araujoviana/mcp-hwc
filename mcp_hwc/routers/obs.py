@@ -164,15 +164,20 @@ def obs_delete_bucket(
     )
 
 def register_obs_tools(mcp: FastMCP):
-    mcp.tool()(obs_list_buckets)
-    mcp.tool()(obs_create_bucket)
-    mcp.tool()(obs_list_objects)
-    mcp.tool()(obs_get_bucket_location)
-    mcp.tool()(obs_head_bucket)
-    mcp.tool()(obs_get_text_object)
-    mcp.tool()(obs_head_object)
-    mcp.tool()(obs_put_text_object)
-    mcp.tool()(obs_upload_file)
-    mcp.tool()(obs_download_object)
-    mcp.tool()(obs_delete_object)
-    mcp.tool()(obs_delete_bucket)
+    from mcp_hwc.core.tool_manager import tool_manager, Toolset
+
+    ts = Toolset("obs", "Tools for Object Storage Service (OBS) operations.")
+    ts.add_tool(obs_list_buckets)
+    ts.add_tool(obs_create_bucket)
+    ts.add_tool(obs_list_objects)
+    ts.add_tool(obs_get_bucket_location)
+    ts.add_tool(obs_head_bucket)
+    ts.add_tool(obs_get_text_object)
+    ts.add_tool(obs_head_object)
+    ts.add_tool(obs_put_text_object)
+    ts.add_tool(obs_upload_file)
+    ts.add_tool(obs_download_object)
+    ts.add_tool(obs_delete_object)
+    ts.add_tool(obs_delete_bucket)
+
+    tool_manager.register_toolset(ts)

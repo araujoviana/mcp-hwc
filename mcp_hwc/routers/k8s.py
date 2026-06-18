@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 import mcp_hwc.server as server
 from mcp_hwc.cloud_services.cli_service import DEFAULT_TOOL_IMAGES, ContainerMount
-from mcp_hwc.schemas.operations import K8sApplySchema
+from mcp_hwc.schemas.operations import K8sApplySchema, K8sExecuteSchema
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
@@ -305,44 +305,43 @@ def k8s_logs(
 
     return server._run_tool_call(get_logs)
 
-def k8s_exec(
-    kubeconfig_path: str,
-    pod: str,
-    namespace: str,
-    command: str,
-    container: str | None = None,
-    context: str | None = None,
-    execution_backend: str = "auto",
-    container_image: str | None = None,
+def k8s_execute(
+    args: K8sExecuteSchema
 ) -> dict[str, object]:
-    """Execute a shell command inside a Kubernetes pod using kubectl exec."""
+    """Execute an arbitrary kubectl command against a cluster."""
 
-    def exec_in_pod() -> dict[str, object]:
-        if not namespace:
-            raise ValueError("namespace is required")
-        if not command.strip():
+    def execute_kubectl() -> dict[str, object]:
+        if not args.command.strip():
             raise ValueError("command cannot be empty")
 
-        resolved_image = container_image or DEFAULT_TOOL_IMAGES.get("kubectl")
+        resolved_image = args.container_image or DEFAULT_TOOL_IMAGES.get("kubectl")
         backend = server.get_cli_service().resolve_backend(
             "kubectl",
-            backend=execution_backend,
+            backend=args.execution_backend,
             container_image=resolved_image,
         )
         kubeconfig_args, mounts = server._prepare_kubeconfig_for_backend(
-            kubeconfig_path,
-            context=context,
+            args.kubeconfig_path,
+            context=args.context,
             backend=backend,
         )
 
-        args = [*kubeconfig_args, "exec", pod, "-n", namespace]
-        if container:
-            args.extend(["-c", container])
-        args.extend(["--", "sh", "-lc", command])
+        # Split command into parts, but be careful with quotes if needed.
+        # Simple split for now, but in a real scenario we'd want something more robust.
+        import shlex
+        cmd_parts = shlex.split(args.command)
+
+        # Prevent calling other binaries
+        if cmd_parts and cmd_parts[0] == "kubectl":
+            cmd_parts = cmd_parts[1:]
+
+        final_args = [*kubeconfig_args, *cmd_parts]
+        if args.namespace:
+            final_args.extend(["-n", args.namespace])
 
         result = server._execute_cli_tool(
             "kubectl",
-            args,
+            final_args,
             execution_backend=backend,
             container_image=resolved_image,
             mounts=mounts,
@@ -350,12 +349,11 @@ def k8s_exec(
         return {
             **result,
             "resource_type": "kubernetes",
-            "pod": pod,
-            "namespace": namespace,
-            "container": container,
+            "command": args.command,
+            "namespace": args.namespace,
         }
 
-    return server._run_tool_call(exec_in_pod)
+    return server._run_tool_call(execute_kubectl)
 
 def helm_install(
     kubeconfig_path: str,
@@ -575,12 +573,17 @@ def helm_uninstall(
     return server._run_tool_call(uninstall_chart)
 
 def register_k8s_tools(mcp: FastMCP):
-    mcp.tool()(cce_get_kubeconfig)
-    mcp.tool()(k8s_apply_manifest)
-    mcp.tool()(k8s_get_resources)
-    mcp.tool()(k8s_wait)
-    mcp.tool()(k8s_logs)
-    mcp.tool()(k8s_exec)
-    mcp.tool()(helm_install)
-    mcp.tool()(helm_upgrade)
-    mcp.tool()(helm_uninstall)
+    from mcp_hwc.core.tool_manager import tool_manager, Toolset
+
+    ts = Toolset("k8s", "Tools for Kubernetes and Helm operations on Huawei Cloud CCE.")
+    ts.add_tool(cce_get_kubeconfig)
+    ts.add_tool(k8s_apply_manifest)
+    ts.add_tool(k8s_get_resources)
+    ts.add_tool(k8s_wait)
+    ts.add_tool(k8s_logs)
+    ts.add_tool(k8s_execute)
+    ts.add_tool(helm_install)
+    ts.add_tool(helm_upgrade)
+    ts.add_tool(helm_uninstall)
+
+    tool_manager.register_toolset(ts)

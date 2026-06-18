@@ -21,16 +21,17 @@ The server is split into three layers.
 
 2. Workflow helpers
 - ECS: `ecs_create_vm`
-- OBS: `obs_*`
-- SSH: `ssh_*`
 - SWR: `swr_upload_image`
 - FunctionGraph: `functiongraph_deploy_code`
 - LTS: `lts_query_logs`
-- CCE access: `cce_get_kubeconfig`
-- Kubernetes: `k8s_apply_manifest`, `k8s_get_resources`, `k8s_wait`, `k8s_logs`, `k8s_exec`
-- Helm: `helm_install`, `helm_upgrade`, `helm_uninstall`
 
-3. Generic SDK execution
+3. Dynamic Toolsets (load with `use_toolset`)
+- OBS (`obs`): `obs_*`
+- SSH (`ssh`): `ssh_*`
+- Kubernetes (`k8s`): `cce_get_kubeconfig`, `k8s_execute`, `k8s_apply_manifest`, `helm_*`, etc.
+- Pricing (`pricing`): `price_*`
+
+4. Generic SDK execution
 - `huaweicloud_list_operations`
 - `huaweicloud_describe_operation`
 - `huaweicloud_call_operation`
