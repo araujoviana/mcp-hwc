@@ -108,6 +108,28 @@ Optional:
 
 Most flows should not require `HWC_REGION`, `HWC_PROJECT_ID`, or service-specific environment variables. Region and project are resolved from tool arguments, payloads, and IAM when possible.
 
+## Installation in OpenCode
+Add the MCP server to your OpenCode configuration file. This is usually `~/.config/opencode/opencode.jsonc` or `.opencode/opencode.json` in the project root.
+
+```json
+"mcp": {
+  "hwc": {
+    "type": "local",
+    "command": ["uv", "run", "mcp-hwc"],
+    "enabled": true
+  }
+}
+```
+
+## Installation in Claude Code
+Install the server by running this command in your terminal:
+`claude mcp add hwc -- uv run mcp-hwc`
+
+Environment variables like HWC_AK and HWC_SK can be passed using the `--env` flag if they are not already exported.
+
+## Try it using MaaS
+Test the MCP server using ModelArts Studio (MaaS). This is our accessible AI model API. Get started here: https://www.huaweicloud.com/intl/en-us/product/maas.html.
+
 ## Notes
 
 - Use `huaweicloud_summarize_capabilities` when you want a fast answer about what a service can do through the SDK surface.

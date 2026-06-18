@@ -144,7 +144,8 @@ mcp = FastMCP("huawei-cloud", instructions=_MCP_INSTRUCTIONS)
 
 @lru_cache(maxsize=1)
 def get_obs_service() -> ObsService:
-    return ObsService.from_config(ObsConfig.from_env())
+    config = ObsConfig.from_env()
+    return ObsService.from_config(config)
 
 
 @lru_cache(maxsize=1)
@@ -239,6 +240,7 @@ def _generated_service_tool_enabled(service_name: str) -> bool:
 
 
 def _run_tool_call(call: Callable[[], T]) -> T:
+    """Execute a tool call and wrap potential exceptions into ToolError."""
     try:
         return call()
     except (
@@ -252,7 +254,6 @@ def _run_tool_call(call: Callable[[], T]) -> T:
         ValueError,
     ) as exc:
         msg = str(exc)
-        # Enhance common flavor compatibility errors
         if "subeni quota is 0" in msg or "Eni network is not supported" in msg:
             msg += (
                 ". Try using a different flavor that supports ENI. "
@@ -374,8 +375,8 @@ def _execute_cli_tool(
     )
 
 
+# Import router tools to expose them in the server module for testing
 from mcp_hwc.routers.obs import (
-    register_obs_tools,
     obs_list_buckets,
     obs_create_bucket,
     obs_list_objects,
@@ -388,9 +389,9 @@ from mcp_hwc.routers.obs import (
     obs_download_object,
     obs_delete_object,
     obs_delete_bucket,
+    register_obs_tools,
 )
 from mcp_hwc.routers.k8s import (
-    register_k8s_tools,
     cce_get_kubeconfig,
     k8s_apply_manifest,
     k8s_get_resources,
@@ -400,17 +401,19 @@ from mcp_hwc.routers.k8s import (
     helm_install,
     helm_upgrade,
     helm_uninstall,
+    register_k8s_tools,
 )
 from mcp_hwc.routers.pricing import (
-    register_pricing_tools,
     price_quote,
     price_discover,
     price_export,
     price_list_quotes,
     price_get_quote,
     price_share,
+    register_pricing_tools,
 )
 
+# Register tools with the MCP server
 register_obs_tools(mcp)
 register_k8s_tools(mcp)
 register_pricing_tools(mcp)
@@ -598,16 +601,12 @@ def huaweicloud_call_operation(
         if not wait_for_completion:
             return result
 
-        # Detect Job ID for common async operations
-        # ECS/CCE/VPC often return job_id or cluster_id/node_pool_id that might need polling
-        # This is a generic poller attempt for job_id
         response_body = result.get("response") or {}
         job_id = response_body.get("job_id") or response_body.get("jobId")
 
         if not job_id:
             return result
 
-        # If it's a job, wait for it
         return _wait_for_service_value(
             resolved_service,
             operation="show_job" if "show_job" in resolved_service._operations() else "show_job_status",

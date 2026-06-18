@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
-from mcp_hwc.server import _run_tool_call, get_obs_service
+import mcp_hwc.server as server
 from mcp_hwc.schemas.operations import ObsBucketSchema
 
 if TYPE_CHECKING:
@@ -8,14 +8,14 @@ if TYPE_CHECKING:
 
 def obs_list_buckets() -> dict[str, object]:
     """List OBS buckets accessible to the configured credentials."""
-    return _run_tool_call(lambda: get_obs_service().list_buckets())
+    return server._run_tool_call(lambda: server.get_obs_service().list_buckets())
 
 def obs_create_bucket(
     args: ObsBucketSchema
 ) -> dict[str, object]:
     """Create an OBS bucket in the requested region code or alias like 'santiago'."""
-    return _run_tool_call(
-        lambda: get_obs_service().create_bucket(
+    return server._run_tool_call(
+        lambda: server.get_obs_service().create_bucket(
             bucket_name=args.bucket_name,
             region=args.region,
         )
@@ -29,8 +29,8 @@ def obs_list_objects(
     region: str | None = None,
 ) -> dict[str, object]:
     """List objects in an OBS bucket, optionally filtered by prefix."""
-    return _run_tool_call(
-        lambda: get_obs_service().list_objects(
+    return server._run_tool_call(
+        lambda: server.get_obs_service().list_objects(
             bucket_name=bucket_name,
             prefix=prefix,
             max_keys=max_keys,
@@ -41,15 +41,15 @@ def obs_list_objects(
 
 def obs_get_bucket_location(bucket_name: str) -> dict[str, str | None]:
     """Get the region/location for an OBS bucket."""
-    return _run_tool_call(lambda: get_obs_service().get_bucket_location(bucket_name))
+    return server._run_tool_call(lambda: server.get_obs_service().get_bucket_location(bucket_name))
 
 def obs_head_bucket(
     bucket_name: str,
     region: str | None = None,
 ) -> dict[str, object]:
     """Check bucket metadata and reachability."""
-    return _run_tool_call(
-        lambda: get_obs_service().head_bucket(
+    return server._run_tool_call(
+        lambda: server.get_obs_service().head_bucket(
             bucket_name=bucket_name,
             region=region,
         )
@@ -62,8 +62,8 @@ def obs_get_text_object(
     region: str | None = None,
 ) -> dict[str, object]:
     """Read an OBS object into memory and decode it as text."""
-    return _run_tool_call(
-        lambda: get_obs_service().get_object_text(
+    return server._run_tool_call(
+        lambda: server.get_obs_service().get_object_text(
             bucket_name=bucket_name,
             object_key=object_key,
             encoding=encoding,
@@ -78,8 +78,8 @@ def obs_head_object(
     region: str | None = None,
 ) -> dict[str, object]:
     """Read object metadata without downloading the object body."""
-    return _run_tool_call(
-        lambda: get_obs_service().head_object(
+    return server._run_tool_call(
+        lambda: server.get_obs_service().head_object(
             bucket_name=bucket_name,
             object_key=object_key,
             version_id=version_id,
@@ -94,8 +94,8 @@ def obs_put_text_object(
     region: str | None = None,
 ) -> dict[str, object]:
     """Upload text content into an OBS object."""
-    return _run_tool_call(
-        lambda: get_obs_service().put_text_object(
+    return server._run_tool_call(
+        lambda: server.get_obs_service().put_text_object(
             bucket_name=bucket_name,
             object_key=object_key,
             content=content,
@@ -110,8 +110,8 @@ def obs_upload_file(
     region: str | None = None,
 ) -> dict[str, object]:
     """Upload a local file into OBS, defaulting the object key to the file name."""
-    return _run_tool_call(
-        lambda: get_obs_service().upload_file(
+    return server._run_tool_call(
+        lambda: server.get_obs_service().upload_file(
             bucket_name=bucket_name,
             source_path=source_path,
             object_key=object_key,
@@ -126,8 +126,8 @@ def obs_download_object(
     region: str | None = None,
 ) -> dict[str, object]:
     """Download an OBS object to a local file path."""
-    return _run_tool_call(
-        lambda: get_obs_service().download_object(
+    return server._run_tool_call(
+        lambda: server.get_obs_service().download_object(
             bucket_name=bucket_name,
             object_key=object_key,
             destination_path=destination_path,
@@ -142,8 +142,8 @@ def obs_delete_object(
     region: str | None = None,
 ) -> dict[str, object]:
     """Delete an OBS object."""
-    return _run_tool_call(
-        lambda: get_obs_service().delete_object(
+    return server._run_tool_call(
+        lambda: server.get_obs_service().delete_object(
             bucket_name=bucket_name,
             object_key=object_key,
             version_id=version_id,
@@ -156,8 +156,8 @@ def obs_delete_bucket(
     region: str | None = None,
 ) -> dict[str, object]:
     """Delete an OBS bucket."""
-    return _run_tool_call(
-        lambda: get_obs_service().delete_bucket(
+    return server._run_tool_call(
+        lambda: server.get_obs_service().delete_bucket(
             bucket_name=bucket_name,
             region=region,
         )

@@ -324,13 +324,10 @@ def list_compatible_ecs_flavors(
     eni_required: bool = False,
     az: str | None = None,
 ) -> list[dict[str, object]]:
-    # Use list_flavors_details to get os_extra_specs
-    # Wait, ecs v2 list_flavors might already have details in some regions or we use ListFlavorsDetails
-    # Checking the SDK, ListFlavorsDetails is often what we want for extra_specs.
+    """List ECS flavors compatible with the specified resource requirements."""
     try:
         response = ecs_service.call_operation("list_flavors", {"limit": 500})
     except Exception:
-        # Fallback or try another way if list_flavors doesn't give extra_specs
         response = ecs_service.call_operation("list_flavors_details", {"limit": 500})
 
     flavors = response["response"].get("flavors") or []
@@ -351,8 +348,6 @@ def list_compatible_ecs_flavors(
         if eni_required:
             sub_eni = extra_specs.get("sub_network_interface_max_num")
             if sub_eni is None:
-                # Some flavors use different keys or we might need to check if it's a "known" eni flavor
-                # But we follow the report's hint
                 continue
             try:
                 if int(sub_eni) <= 0:
