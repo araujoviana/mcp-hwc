@@ -95,7 +95,14 @@ def _run_tool_call(call: Callable[[], T]) -> T:
         SshServiceError,
         ValueError,
     ) as exc:
-        raise ToolError(str(exc)) from exc
+        msg = str(exc)
+        # Enhance common flavor compatibility errors
+        if "subeni quota is 0" in msg or "Eni network is not supported" in msg:
+            msg += (
+                ". Try using a different flavor that supports ENI. "
+                "You can use `ecs_list_compatible_flavors` with `eni_required=True` to find one."
+            )
+        raise ToolError(msg) from exc
 
 def clear_caches() -> None:
     get_obs_service.cache_clear()
