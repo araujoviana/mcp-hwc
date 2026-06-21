@@ -220,6 +220,30 @@ def extract_server_ips(server: dict[str, object]) -> tuple[str | None, str | Non
     return private_ip, public_ip
 
 
+def find_server_after_create(
+    ecs_service: "HuaweiCloudSdkService",
+    server_ids: list[str],
+    name: str,
+) -> "dict[str, object] | None":
+    """Look up a freshly-created ECS server by ID first, then by exact name as fallback."""
+    if server_ids:
+        server_data = ecs_service.call_operation(
+            "show_server",
+            {"server_id": server_ids[0]},
+        )["response"].get("server") or {}
+        if server_data.get("id"):
+            return server_data
+
+    exact = [
+        s for s in ecs_service.call_operation(
+            "list_servers_details",
+            {"name": name},
+        )["response"].get("servers") or []
+        if s.get("name") == name
+    ]
+    return exact[0] if exact else None
+
+
 def resolve_vpc_and_subnet(
     vpc_service: "HuaweiCloudSdkService",
     *,

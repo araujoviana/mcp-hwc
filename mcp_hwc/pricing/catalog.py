@@ -25,6 +25,17 @@ CLOUD_SERVICE_TYPES: dict[str, str] = {
     "cdn": "hws.service.type.cdn",
 }
 
+# BSS on-demand billing unit per service.
+# Measure IDs: 1 = hours, 10 = GB (traffic), 17 = GB (storage capacity).
+# Services not listed here default to 1 (hours).
+DEMAND_MEASURE_IDS: dict[str, int] = {
+    "evs": 17,
+    "obs": 17,
+    "sfs": 17,
+    "eip": 10,
+    "cdn": 10,
+}
+
 RESOURCE_TYPES: dict[str, str] = {
     "ecs": "hws.resource.type.ec2",
     "evs": "hws.resource.type.evs",

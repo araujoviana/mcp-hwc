@@ -1,4 +1,5 @@
 from __future__ import annotations
+import asyncio
 import uuid
 from typing import TYPE_CHECKING
 from mcp.server.fastmcp.exceptions import ToolError
@@ -9,17 +10,11 @@ from mcp_hwc.server import (
 )
 from mcp_hwc.pricing.models import ResourceDescriptor
 from mcp_hwc.pricing.bss_pricing import BssAccessDenied, PricingNotAvailable
-from mcp_hwc.pricing.web_pricing import SERVICE_HASH_MAP
+from mcp_hwc.pricing.catalog import CLOUD_SERVICE_TYPES
 from mcp_hwc.pricing.tools import export_csv, export_json, export_terraform, format_text
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
-    from mcp_hwc.pricing.models import QuoteResult
-
-async def _web_fallback_quote(descs: list[ResourceDescriptor]) -> QuoteResult:
-    from mcp_hwc.pricing.web_pricing import WebPricingBackend
-    web = WebPricingBackend(headless=True)
-    return await web.quote(descs)
 
 async def price_quote(
     resources: list[dict[str, object]],
@@ -49,11 +44,13 @@ async def price_quote(
 
     backend = get_bss_pricing_backend()
     try:
-        result = backend.quote(descs)
-    except BssAccessDenied:
-        result = await _web_fallback_quote(descs)
-    except PricingNotAvailable:
-        result = await _web_fallback_quote(descs)
+        result = await asyncio.to_thread(backend.quote, descs)
+    except BssAccessDenied as exc:
+        raise ToolError(f"BSS pricing API access denied (CBC.0156): {exc}") from exc
+    except PricingNotAvailable as exc:
+        raise ToolError(f"BSS pricing API unavailable: {exc}") from exc
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
 
     get_quote_store().save(result)
     return {
@@ -70,17 +67,21 @@ async def price_discover(
 
     backend = get_bss_pricing_backend()
     try:
-        specs = backend.discover_specs(service, region=region, keyword=keyword)
+        specs = await asyncio.to_thread(
+            backend.discover_specs, service, region=region, keyword=keyword
+        )
     except BssAccessDenied:
         raise ToolError(
             f"BSS API access denied (CBC.0156). Cannot discover specs for '{service}'. "
-            f"Known services: {', '.join(sorted(SERVICE_HASH_MAP.keys()))}"
+            f"Known services: {', '.join(sorted(CLOUD_SERVICE_TYPES.keys()))}"
         )
     except PricingNotAvailable:
         raise ToolError(
             f"Pricing not available for '{service}'. "
-            f"Known services: {', '.join(sorted(SERVICE_HASH_MAP.keys()))}"
+            f"Known services: {', '.join(sorted(CLOUD_SERVICE_TYPES.keys()))}"
         )
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
     return {
         "service": service,
         "region": region,
@@ -136,27 +137,9 @@ def price_get_quote(quote_id: str) -> dict[str, object]:
 
     return _run_tool_call(get_quote)
 
-def price_share(quote_id: str) -> dict[str, object]:
-    """Generate a shareable URL for a quote on the HWC price calculator. Requires Playwright and an active HWC browser session."""
-
-    def share() -> dict[str, object]:
-        store = get_quote_store()
-        result = store.get(uuid.UUID(quote_id))
-        calculator_url = "https://www.huaweicloud.com/pricing.html"
-        return {
-            "quote_id": quote_id,
-            "share_url": calculator_url,
-            "method": "direct_link",
-            "note": "Pre-filled calculator URL generation requires Playwright automation with an active HWC session. For now, this returns the calculator landing page.",
-            "services": [item.service for item in result.items],
-        }
-
-    return _run_tool_call(share)
-
 def register_pricing_tools(mcp: FastMCP):
     mcp.tool()(price_quote)
     mcp.tool()(price_discover)
     mcp.tool()(price_export)
     mcp.tool()(price_list_quotes)
     mcp.tool()(price_get_quote)
-    mcp.tool()(price_share)
