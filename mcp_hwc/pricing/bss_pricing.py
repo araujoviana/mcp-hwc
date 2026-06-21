@@ -16,7 +16,7 @@ from huaweicloudsdkbss.v2.model import (
 )
 from huaweicloudsdkcore.region.region import Region as SdkRegion
 
-from mcp_hwc.pricing.catalog import resolve_cloud_service_type, resolve_region, resolve_resource_type
+from mcp_hwc.pricing.catalog import DEMAND_MEASURE_IDS, resolve_cloud_service_type, resolve_region, resolve_resource_type
 from mcp_hwc.pricing.models import QuoteItem, QuoteResult, ResourceDescriptor
 
 if TYPE_CHECKING:
@@ -96,18 +96,16 @@ class BssPricingBackend:
 
         response = self._call_api(self._get_client().list_rate_on_period_detail, request)
 
-        if response.status_code >= 400:
-            raise PricingNotAvailable(
-                f"BSS subscription pricing failed: HTTP {response.status_code}"
-            )
-
         official = response.official_website_rating_result
         if official is None or not official.product_rating_results:
             raise PricingNotAvailable("BSS subscription pricing returned no results")
 
         items: list[QuoteItem] = []
-        for result in official.product_rating_results:
-            idx = int(result.id) if result.id is not None else 0
+        for pos, result in enumerate(official.product_rating_results):
+            try:
+                idx = int(result.id) if result.id is not None else pos
+            except ValueError:
+                idx = pos
             if idx >= len(resources):
                 continue
             desc = resources[idx]
@@ -144,18 +142,16 @@ class BssPricingBackend:
 
         response = self._call_api(self._get_client().list_on_demand_resource_ratings, request)
 
-        if response.status_code >= 400:
-            raise PricingNotAvailable(
-                f"BSS on-demand pricing failed: HTTP {response.status_code}"
-            )
-
         results = response.product_rating_results
         if not results:
             raise PricingNotAvailable("BSS on-demand pricing returned no results")
 
         items: list[QuoteItem] = []
-        for result in results:
-            idx = int(result.id) if result.id is not None else 0
+        for pos, result in enumerate(results):
+            try:
+                idx = int(result.id) if result.id is not None else pos
+            except ValueError:
+                idx = pos
             if idx >= len(resources):
                 continue
             desc = resources[idx]
@@ -205,7 +201,7 @@ class BssPricingBackend:
 
     @staticmethod
     def _build_demand_product_info(desc: ResourceDescriptor, index: int) -> DemandProductInfo:
-        kwargs = {
+        kwargs: dict[str, object] = {
             "id": str(index),
             "cloud_service_type": resolve_cloud_service_type(desc.service),
             "resource_type": resolve_resource_type(desc.service),
@@ -220,7 +216,7 @@ class BssPricingBackend:
             kwargs["usage_measure_id"] = 17  # GB
         else:
             kwargs["usage_value"] = 1.0
-            kwargs["usage_measure_id"] = 1  # Standard unit
+            kwargs["usage_measure_id"] = DEMAND_MEASURE_IDS.get(desc.service.lower(), 1)
         return DemandProductInfo(**kwargs)
 
     def discover_specs(

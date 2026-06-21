@@ -7,6 +7,7 @@ import uuid
 from mcp_hwc.cloud_services.compute import (
     create_ecs_security_group,
     extract_server_ips,
+    find_server_after_create,
     generate_secret_password,
     resolve_ecs_flavor,
     resolve_ecs_image,
@@ -126,7 +127,7 @@ def create_ecs_vm(
     response = create_result.get("response") or {}
     job_id = response.get("job_id")
     server_ids = response.get("server_ids") or response.get("serverIds") or []
-    if isinstance(response.get("server_id"), str):
+    if not server_ids and isinstance(response.get("server_id"), str) and response["server_id"].strip():
         server_ids = [response["server_id"]]
 
     result: dict[str, object] = {
@@ -173,19 +174,16 @@ def create_ecs_vm(
             expected_value="SUCCESS",
             timeout_seconds=1200,
         )
-        servers = ecs_service.call_operation(
-            "list_servers_details",
-            {"name": resolved_name},
-        )["response"].get("servers") or []
-        if servers:
-            server = servers[0]
-            private_ip, public_ip = extract_server_ips(server)
-            result["waited"] = True
-            result["server"] = {
-                "id": server.get("id"),
-                "name": server.get("name") or resolved_name,
-                "private_ip": private_ip,
-                "public_ip": public_ip,
-            }
+        server = find_server_after_create(ecs_service, server_ids, resolved_name)
+        if server is None:
+            raise HelperToolError("ECS job succeeded but server record could not be retrieved")
+        private_ip, public_ip = extract_server_ips(server)
+        result["waited"] = True
+        result["server"] = {
+            "id": server.get("id"),
+            "name": server.get("name") or resolved_name,
+            "private_ip": private_ip,
+            "public_ip": public_ip,
+        }
 
     return result

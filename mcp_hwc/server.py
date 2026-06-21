@@ -88,7 +88,6 @@ from mcp_hwc.pricing.bss_pricing import BssAccessDenied, BssPricingBackend, Pric
 from mcp_hwc.pricing.catalog import resolve_region as _pricing_resolve_region
 from mcp_hwc.pricing.persistence import QuoteStore
 from mcp_hwc.pricing.tools import export_csv, export_json, export_terraform, format_text
-from mcp_hwc.pricing.web_pricing import SERVICE_HASH_MAP, WebPricingBackend
 from mcp_hwc.workflows.ecs import create_ecs_vm as _create_ecs_vm_workflow
 from mcp_hwc.workflows.sfs import create_accessible_share as _create_accessible_sfs_share_workflow
 
@@ -409,7 +408,6 @@ from mcp_hwc.routers.pricing import (
     price_export,
     price_list_quotes,
     price_get_quote,
-    price_share,
     register_pricing_tools,
 )
 
@@ -975,7 +973,7 @@ def lts_query_logs(
     endpoint: str | None = None,
     api_version: str | None = None,
 ) -> dict[str, object]:
-    """Resolve LTS log groups or streams by name and query filtered logs."""
+    """Resolve LTS log groups or streams by name and query filtered logs. Requires log_group_id or log_group_name; call list_log_groups first if you only have the cluster or resource name."""
     return _run_tool_call(
         lambda: query_lts_logs(
             _get_resolved_sdk_service(

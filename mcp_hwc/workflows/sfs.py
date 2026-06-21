@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime, timezone
-import re
+import shlex
 import uuid
 
 from mcp_hwc.cloud_services.compute import (
     create_ecs_security_group,
     extract_server_ips,
+    find_server_after_create,
     generate_secret_password,
     pick_sfs_availability_zone,
     resolve_ecs_flavor,
@@ -30,25 +31,15 @@ def mount_sfs_share_via_ssh(
     export_location: str,
     mount_path: str,
 ) -> dict[str, object]:
-    commands = [
-        "apt-get update",
-        "DEBIAN_FRONTEND=noninteractive apt-get install -y nfs-common",
-        f"mkdir -p {mount_path}",
-        f"mount -t nfs -o vers=3,timeo=600,noresvport,nolock {export_location} {mount_path}",
-        f"printf 'sfs proof %s\n' \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\" > {mount_path}/proof.txt",
-        f"grep -q '^{re.escape(export_location)} {re.escape(mount_path)} nfs ' /etc/fstab || printf '{export_location} {mount_path} nfs vers=3,timeo=600,noresvport,nolock,_netdev 0 0\n' >> /etc/fstab",
-        f"cat {mount_path}/proof.txt",
-        f"df -h {mount_path}",
-        f"mount | grep ' {mount_path} '",
-        f"ls -la {mount_path}",
-    ]
+    q_export = shlex.quote(export_location)
+    q_mount = shlex.quote(mount_path)
+    fstab_needle = shlex.quote(export_location + " " + mount_path + " nfs ")
 
-    results: list[dict[str, object]] = []
-    for command in commands:
+    def run(cmd: str) -> dict:
         result = ssh_service.execute(
             host=host,
             username=username,
-            command=command,
+            command=cmd,
             password=password,
             allow_unknown_host=True,
             connect_timeout=20,
@@ -58,12 +49,28 @@ def mount_sfs_share_via_ssh(
             raise HelperToolError(
                 f"Failed to prepare SFS mount on {username}@{host}: {result['stderr'] or result['stdout']}"
             )
-        results.append(result)
+        return result
+
+    run("apt-get update")
+    run("DEBIAN_FRONTEND=noninteractive apt-get install -y nfs-common")
+    run(f"mkdir -p {q_mount}")
+    run(f"mount -t nfs -o vers=3,timeo=600,noresvport,nolock {q_export} {q_mount}")
+    run(f"printf 'sfs proof %s\\n' \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\" > {q_mount}/proof.txt")
+    run(
+        f"grep -qF {fstab_needle} /etc/fstab || "
+        f"printf '%s %s nfs vers=3,timeo=600,noresvport,nolock,_netdev 0 0\\n' "
+        f"{q_export} {q_mount} >> /etc/fstab"
+    )
+    proof = run(f"cat {q_mount}/proof.txt")
+    fs_report = run(f"df -h {q_mount}")
+    mount_report = run(f"mount | grep -F {shlex.quote(' ' + mount_path + ' ')}")
+    dir_listing = run(f"ls -la {q_mount}")
+
     return {
-        "proof_text": results[-4]["stdout"].strip(),
-        "filesystem_report": results[-3]["stdout"].strip(),
-        "mount_report": results[-2]["stdout"].strip(),
-        "directory_listing": results[-1]["stdout"].strip(),
+        "proof_text": proof["stdout"].strip(),
+        "filesystem_report": fs_report["stdout"].strip(),
+        "mount_report": mount_report["stdout"].strip(),
+        "directory_listing": dir_listing["stdout"].strip(),
     }
 
 
@@ -210,7 +217,7 @@ def create_accessible_share(
         availability_zone=resolved_availability_zone,
     )
 
-    create_vm = ecs_service.call_operation(
+    create_vm_response = ecs_service.call_operation(
         "create_servers",
         {
             "x_client_token": str(uuid.uuid4()),
@@ -246,9 +253,13 @@ def create_accessible_share(
             },
         },
     )
-    job_id = create_vm["response"].get("job_id")
+    create_vm = create_vm_response["response"]
+    job_id = create_vm.get("job_id")
     if not isinstance(job_id, str) or not job_id.strip():
         raise HelperToolError("ECS did not return a create job ID")
+    create_server_ids = create_vm.get("server_ids") or create_vm.get("serverIds") or []
+    if not create_server_ids and isinstance(create_vm.get("server_id"), str) and create_vm["server_id"].strip():
+        create_server_ids = [create_vm["server_id"]]
 
     wait_for_service_value(
         ecs_service,
@@ -260,13 +271,9 @@ def create_accessible_share(
         interval_seconds=DEFAULT_POLL_INTERVAL_SECONDS,
     )
 
-    servers = ecs_service.call_operation(
-        "list_servers_details",
-        {"name": resolved_vm_name},
-    )["response"].get("servers") or []
-    if not servers:
+    server = find_server_after_create(ecs_service, create_server_ids, resolved_vm_name)
+    if server is None:
         raise HelperToolError("Could not locate the access VM after creation")
-    server = servers[0]
     private_ip, public_ip = extract_server_ips(server)
     if not public_ip:
         raise HelperToolError("Access VM did not receive a public IP")

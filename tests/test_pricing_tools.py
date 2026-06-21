@@ -94,6 +94,5 @@ def test_pricing_tools_registered_in_mcp() -> None:
         "price_export",
         "price_list_quotes",
         "price_get_quote",
-        "price_share",
     }
     assert expected.issubset(tool_names), f"Missing tools: {expected - tool_names}"
