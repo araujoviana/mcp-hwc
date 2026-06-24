@@ -6,6 +6,7 @@ import uuid
 
 from mcp_hwc.cloud_services.compute import (
     create_ecs_security_group,
+    extract_server_ids_from_response,
     extract_server_ips,
     find_server_after_create,
     generate_secret_password,
@@ -126,9 +127,7 @@ def create_ecs_vm(
     )
     response = create_result.get("response") or {}
     job_id = response.get("job_id")
-    server_ids = response.get("server_ids") or response.get("serverIds") or []
-    if not server_ids and isinstance(response.get("server_id"), str) and response["server_id"].strip():
-        server_ids = [response["server_id"]]
+    server_ids = extract_server_ids_from_response(response)
 
     result: dict[str, object] = {
         "region": create_result.get("region") or region,
