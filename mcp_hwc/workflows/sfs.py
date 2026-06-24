@@ -7,6 +7,7 @@ import uuid
 
 from mcp_hwc.cloud_services.compute import (
     create_ecs_security_group,
+    extract_server_ids_from_response,
     extract_server_ips,
     find_server_after_create,
     generate_secret_password,
@@ -51,13 +52,12 @@ def mount_sfs_share_via_ssh(
             )
         return result
 
-    run("apt-get update")
-    run("DEBIAN_FRONTEND=noninteractive apt-get install -y nfs-common")
+    run("dpkg -s nfs-common >/dev/null 2>&1 || { apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y nfs-common; }")
     run(f"mkdir -p {q_mount}")
     run(f"mount -t nfs -o vers=3,timeo=600,noresvport,nolock {q_export} {q_mount}")
     run(f"printf 'sfs proof %s\\n' \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\" > {q_mount}/proof.txt")
     run(
-        f"grep -qF {fstab_needle} /etc/fstab || "
+        f"awk -v p={fstab_needle} 'index($0,p)==1' /etc/fstab | grep -q . || "
         f"printf '%s %s nfs vers=3,timeo=600,noresvport,nolock,_netdev 0 0\\n' "
         f"{q_export} {q_mount} >> /etc/fstab"
     )
@@ -257,9 +257,7 @@ def create_accessible_share(
     job_id = create_vm.get("job_id")
     if not isinstance(job_id, str) or not job_id.strip():
         raise HelperToolError("ECS did not return a create job ID")
-    create_server_ids = create_vm.get("server_ids") or create_vm.get("serverIds") or []
-    if not create_server_ids and isinstance(create_vm.get("server_id"), str) and create_vm["server_id"].strip():
-        create_server_ids = [create_vm["server_id"]]
+    create_server_ids = extract_server_ids_from_response(create_vm)
 
     wait_for_service_value(
         ecs_service,

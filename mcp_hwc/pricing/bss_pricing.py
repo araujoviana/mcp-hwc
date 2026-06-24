@@ -100,31 +100,7 @@ class BssPricingBackend:
         if official is None or not official.product_rating_results:
             raise PricingNotAvailable("BSS subscription pricing returned no results")
 
-        items: list[QuoteItem] = []
-        for pos, result in enumerate(official.product_rating_results):
-            try:
-                idx = int(result.id) if result.id is not None else pos
-            except ValueError:
-                idx = pos
-            if idx >= len(resources):
-                continue
-            desc = resources[idx]
-            amount = float(result.official_website_amount or 0)
-            items.append(
-                QuoteItem(
-                    service=desc.service,
-                    spec=desc.spec,
-                    region=desc.region,
-                    period_type=desc.period_type,
-                    period_num=desc.period_num,
-                    quantity=desc.quantity,
-                    size=desc.size,
-                    unit_price=amount,
-                    currency="USD",
-                )
-            )
-
-        return items
+        return self._resolve_quote_items(official.product_rating_results, resources)
 
     def _quote_on_demand(self, resources: list[ResourceDescriptor]) -> list[QuoteItem]:
         product_infos = [
@@ -146,13 +122,23 @@ class BssPricingBackend:
         if not results:
             raise PricingNotAvailable("BSS on-demand pricing returned no results")
 
+        return self._resolve_quote_items(results, resources, period_type_override="on_demand", period_num_override=1)
+
+    @staticmethod
+    def _resolve_quote_items(
+        raw_results: list,
+        resources: list[ResourceDescriptor],
+        *,
+        period_type_override: str | None = None,
+        period_num_override: int | None = None,
+    ) -> list[QuoteItem]:
         items: list[QuoteItem] = []
-        for pos, result in enumerate(results):
+        for pos, result in enumerate(raw_results):
             try:
                 idx = int(result.id) if result.id is not None else pos
             except ValueError:
                 idx = pos
-            if idx >= len(resources):
+            if not (0 <= idx < len(resources)):
                 continue
             desc = resources[idx]
             amount = float(result.official_website_amount or 0)
@@ -161,15 +147,14 @@ class BssPricingBackend:
                     service=desc.service,
                     spec=desc.spec,
                     region=desc.region,
-                    period_type="on_demand",
-                    period_num=1,
+                    period_type=period_type_override if period_type_override is not None else desc.period_type,
+                    period_num=period_num_override if period_num_override is not None else desc.period_num,
                     quantity=desc.quantity,
                     size=desc.size,
                     unit_price=amount,
                     currency="USD",
                 )
             )
-
         return items
 
     @staticmethod
@@ -213,7 +198,7 @@ class BssPricingBackend:
             kwargs["resource_size"] = int(desc.size)
             kwargs["size_measure_id"] = 17  # GB
             kwargs["usage_value"] = float(desc.size)
-            kwargs["usage_measure_id"] = 17  # GB
+            kwargs["usage_measure_id"] = DEMAND_MEASURE_IDS.get(desc.service.lower(), 17)
         else:
             kwargs["usage_value"] = 1.0
             kwargs["usage_measure_id"] = DEMAND_MEASURE_IDS.get(desc.service.lower(), 1)

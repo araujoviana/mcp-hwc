@@ -220,6 +220,13 @@ def extract_server_ips(server: dict[str, object]) -> tuple[str | None, str | Non
     return private_ip, public_ip
 
 
+def extract_server_ids_from_response(response: "dict[str, object]") -> "list[str]":
+    server_ids = response.get("server_ids") or response.get("serverIds") or []
+    if not server_ids and isinstance(response.get("server_id"), str) and response["server_id"].strip():
+        server_ids = [response["server_id"]]
+    return list(server_ids)
+
+
 def find_server_after_create(
     ecs_service: "HuaweiCloudSdkService",
     server_ids: list[str],
@@ -227,12 +234,15 @@ def find_server_after_create(
 ) -> "dict[str, object] | None":
     """Look up a freshly-created ECS server by ID first, then by exact name as fallback."""
     if server_ids:
-        server_data = ecs_service.call_operation(
-            "show_server",
-            {"server_id": server_ids[0]},
-        )["response"].get("server") or {}
-        if server_data.get("id"):
-            return server_data
+        try:
+            server_data = ecs_service.call_operation(
+                "show_server",
+                {"server_id": server_ids[0]},
+            )["response"].get("server") or {}
+            if server_data.get("id"):
+                return server_data
+        except Exception:
+            pass
 
     exact = [
         s for s in ecs_service.call_operation(
