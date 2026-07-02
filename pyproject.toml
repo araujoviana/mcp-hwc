@@ -36,6 +36,7 @@ dependencies = [
     "huaweicloudsdkcss>=3.1.192",
     "huaweicloudsdkcts>=3.1.192",
     "huaweicloudsdkdas>=3.1.192",
+    "huaweicloudsdkdataartsstudio>=3.1.202",
     "huaweicloudsdkdc>=3.1.192",
     "huaweicloudsdkdcs>=3.1.192",
     "huaweicloudsdkddm>=3.1.192",

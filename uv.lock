@@ -661,7 +661,7 @@ wheels = [
 
 [[package]]
 name = "huaweicloudsdkcore"
-version = "3.1.196"
+version = "3.1.202"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "certifi" },
@@ -674,7 +674,7 @@ dependencies = [
     { name = "six" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/68/00/1903ec7ecdd92888eb63c72f12fd9fb58cab5593fc1cc24d4f7118484d1e/huaweicloudsdkcore-3.1.196-py3-none-any.whl", hash = "sha256:193c64cef86e71b71f105564ddee62c2606bc9a03f5551fb0559b257c138e712", size = 69556, upload-time = "2026-05-21T12:16:07.22Z" },
+    { url = "https://files.pythonhosted.org/packages/8a/cf/23bf973e95af681975a3d22b8e7fe1102ef701557785e8d7e021365aa057/huaweicloudsdkcore-3.1.202-py3-none-any.whl", hash = "sha256:24102bfd85a29ab74ec988ebc1f36d46c789d8316de39f14b3202d26b34aeac3", size = 69577, upload-time = "2026-07-02T08:13:59.336Z" },
 ]
 
 [[package]]
@@ -708,6 +708,17 @@ dependencies = [
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d8/74/d10765b1b44f3467fbfa818aea8a15d69c4702bf07b3c569df2469fb9982/huaweicloudsdkdas-3.1.192-py3-none-any.whl", hash = "sha256:d54d5cd4939205460ce70dd394cd66054e7188ab3f4b926a71d8471b62f4de7c", size = 556412, upload-time = "2026-04-24T08:39:20.818Z" },
+]
+
+[[package]]
+name = "huaweicloudsdkdataartsstudio"
+version = "3.1.202"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "huaweicloudsdkcore" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/11/5b/c90c0f4c92eb65b217edf7d3f040428e5db2a5c5d12a91c8532a9d7f1d0b/huaweicloudsdkdataartsstudio-3.1.202-py3-none-any.whl", hash = "sha256:3043c582fb12f114838df0fb963168878715d4a0cc01b802bd9dfeb7bc043086", size = 2395192, upload-time = "2026-07-02T08:14:12.19Z" },
 ]
 
 [[package]]
@@ -1349,6 +1360,7 @@ dependencies = [
     { name = "huaweicloudsdkcss" },
     { name = "huaweicloudsdkcts" },
     { name = "huaweicloudsdkdas" },
+    { name = "huaweicloudsdkdataartsstudio" },
     { name = "huaweicloudsdkdc" },
     { name = "huaweicloudsdkdcs" },
     { name = "huaweicloudsdkddm" },
@@ -1438,6 +1450,7 @@ requires-dist = [
     { name = "huaweicloudsdkcss", specifier = ">=3.1.192" },
     { name = "huaweicloudsdkcts", specifier = ">=3.1.192" },
     { name = "huaweicloudsdkdas", specifier = ">=3.1.192" },
+    { name = "huaweicloudsdkdataartsstudio", specifier = ">=3.1.202" },
     { name = "huaweicloudsdkdc", specifier = ">=3.1.192" },
     { name = "huaweicloudsdkdcs", specifier = ">=3.1.192" },
     { name = "huaweicloudsdkddm", specifier = ">=3.1.192" },

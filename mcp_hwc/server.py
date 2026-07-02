@@ -410,11 +410,16 @@ from mcp_hwc.routers.pricing import (
     price_get_quote,
     register_pricing_tools,
 )
+from mcp_hwc.routers.mrs import (
+    mrs_list_node_ips,
+    register_mrs_tools,
+)
 
 # Register tools with the MCP server
 register_obs_tools(mcp)
 register_k8s_tools(mcp)
 register_pricing_tools(mcp)
+register_mrs_tools(mcp)
 
 
 @mcp.tool()

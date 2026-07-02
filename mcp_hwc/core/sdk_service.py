@@ -1032,6 +1032,15 @@ _CODEHUB_VERSIONS = {
         "CodeHubRegion",
     ),
 }
+_DATAARTSSTUDIO_VERSIONS = {
+    "v1": _service_version(
+        "huaweicloudsdkdataartsstudio",
+        "v1",
+        "DataArtsStudioClient",
+        "dataartsstudio_region",
+        "DataArtsStudioRegion",
+    ),
+}
 
 SERVICE_SPECS = {
     "ecs": ServiceSpec(
@@ -1862,6 +1871,19 @@ SERVICE_SPECS = {
         aliases=("code_hub",),
         provisioning_prerequisites=(),
         provisioning_notes="Manage the older CodeHub repository surface when users target legacy CodeArts source-control workflows."
+    ),
+    "dataarts_studio": ServiceSpec(
+        name="dataarts_studio",
+        display_name="DataArts Studio",
+        implementation_name="dataartsstudio",
+        sdk_package_root="huaweicloudsdkdataartsstudio",
+        env_key="DATAARTSSTUDIO",
+        credential_scope="basic",
+        default_api_version="v1",
+        versions=_DATAARTSSTUDIO_VERSIONS,
+        aliases=("dataarts", "dayu"),
+        provisioning_prerequisites=("vpc", "eip"),
+        provisioning_notes="Manage DataArts Studio instances, workspaces, and related data-governance resources.",
     ),
     "dds": ServiceSpec(
         name="dds",
