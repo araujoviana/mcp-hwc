@@ -94,5 +94,63 @@ def test_pricing_tools_registered_in_mcp() -> None:
         "price_export",
         "price_list_quotes",
         "price_get_quote",
+        "price_share",
     }
     assert expected.issubset(tool_names), f"Missing tools: {expected - tool_names}"
+
+
+def test_catalog_fallback_specs_returns_known_service() -> None:
+    from mcp_hwc.server import _catalog_fallback_specs
+
+    specs = _catalog_fallback_specs("ecs")
+    assert len(specs) == 1
+    assert specs[0]["resource_type"] == "hws.resource.type.ec2"
+
+
+def test_catalog_fallback_specs_returns_empty_for_unknown() -> None:
+    from mcp_hwc.server import _catalog_fallback_specs
+
+    specs = _catalog_fallback_specs("nonexistent")
+    assert specs == []
+
+
+def test_catalog_fallback_specs_filters_by_keyword() -> None:
+    from mcp_hwc.server import _catalog_fallback_specs
+
+    specs = _catalog_fallback_specs("ecs", keyword="xyznope")
+    assert specs == []
+
+
+def test_price_share_uses_service_hash(monkeypatch: pytest.MonkeyPatch) -> None:
+    from mcp_hwc.pricing.persistence import QuoteStore
+    from mcp_hwc.server import price_share
+
+    store = QuoteStore()
+    result = QuoteResult(
+        quote_id=uuid.uuid4(),
+        items=(
+            QuoteItem(
+                service="ecs",
+                spec="c6.large.2",
+                region="sa-brazil-1",
+                period_type="month",
+                period_num=1,
+                quantity=1,
+                unit_price=100.0,
+                currency="USD",
+            ),
+        ),
+        currency="USD",
+        created_at=datetime.now(timezone.utc),
+    )
+    store.save(result)
+
+    monkeypatch.setattr(
+        "mcp_hwc.routers.pricing.get_quote_store",
+        lambda: store,
+    )
+
+    output = price_share(quote_id=str(result.quote_id))
+    assert "calculator.html" in output["share_url"]
+    assert "/ecs" in output["share_url"]
+    assert output["method"] == "calculator_service_page"

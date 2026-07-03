@@ -37,14 +37,56 @@ class BssPricingBackend:
     def __init__(self, config: CloudApiConfig) -> None:
         self._config = config
         self._client: BssClient | None = None
+        self._project_id_cache: dict[str, str] = {}
 
-    def _get_client(self) -> BssClient:
-        if self._client is not None:
-            return self._client
-        self._client = self._build_client()
-        return self._client
+    def _resolve_project_id(self, region: str) -> str:
+        if self._config.project_id:
+            return self._config.project_id
+        normalized = resolve_region(region)
+        cached = self._project_id_cache.get(normalized)
+        if cached is not None:
+            return cached
+        project_id = ""
+        try:
+            from huaweicloudsdkiam.v3 import IamClient
+            from huaweicloudsdkiam.v3.model import KeystoneListProjectsRequest
 
-    def _build_client(self) -> BssClient:
+            iam_region = SdkRegion(id=normalized, endpoint=f"iam.{self._domain_suffix()}")
+            client = (
+                IamClient.new_builder()
+                .with_credentials(self._build_credentials())
+                .with_region(iam_region)
+                .build()
+            )
+            resp = client.keystone_list_projects(KeystoneListProjectsRequest(name=normalized))
+            for p in resp.projects:
+                project_id = p.id
+                break
+        except Exception as exc:
+            log.warning("IAM project lookup failed for %s: %s", normalized, exc)
+        # Cache misses and failures too, so quotes without IAM access don't
+        # pay a fresh IAM round-trip on every call.
+        self._project_id_cache[normalized] = project_id
+        return project_id
+
+    def _project_id_for(self, resources: list[ResourceDescriptor]) -> str:
+        if not resources:
+            return ""
+        regions = {resolve_region(r.region) for r in resources}
+        if len(regions) > 1:
+            log.warning(
+                "Quote spans multiple regions %s; BSS accepts one project_id per "
+                "request, using the first resource's region.",
+                sorted(regions),
+            )
+        return self._resolve_project_id(resources[0].region)
+
+    def _domain_suffix(self) -> str:
+        endpoint = self._config.endpoint or "bss.myhuaweicloud.com"
+        host = endpoint.removeprefix("https://").removeprefix("http://").rstrip("/")
+        return host.split(".", 1)[1] if "." in host else "myhuaweicloud.com"
+
+    def _build_credentials(self):
         from huaweicloudsdkcore.auth.credentials import GlobalCredentials
 
         creds = GlobalCredentials(
@@ -55,7 +97,16 @@ class BssPricingBackend:
             creds.security_token = self._config.security_token
         if self._config.domain_id:
             creds.domain_id = self._config.domain_id
+        return creds
 
+    def _get_client(self) -> BssClient:
+        if self._client is not None:
+            return self._client
+        self._client = self._build_client()
+        return self._client
+
+    def _build_client(self) -> BssClient:
+        creds = self._build_credentials()
         region = self._config.region or "myhuaweicloud.com"
         endpoint = self._config.endpoint or "bss.myhuaweicloud.com"
         sdk_region = SdkRegion(id=region, endpoint=endpoint)
@@ -90,7 +141,7 @@ class BssPricingBackend:
             for i, r in enumerate(resources)
         ]
 
-        project_id = self._config.project_id or ""
+        project_id = self._project_id_for(resources)
         body = RateOnPeriodReq(project_id=project_id, product_infos=product_infos)
         request = ListRateOnPeriodDetailRequest(body=body)
 
@@ -108,7 +159,7 @@ class BssPricingBackend:
             for i, r in enumerate(resources)
         ]
 
-        project_id = self._config.project_id or ""
+        project_id = self._project_id_for(resources)
         body = RateOnDemandReq(
             project_id=project_id,
             inquiry_precision=1,

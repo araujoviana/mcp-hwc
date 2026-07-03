@@ -58,6 +58,24 @@ async def price_quote(
         **result.to_dict(),
     }
 
+def _catalog_fallback_specs(
+    service: str,
+    keyword: str | None = None,
+) -> list[dict[str, str]]:
+    from mcp_hwc.pricing.catalog import RESOURCE_TYPES
+
+    key = service.strip().lower()
+    if key not in CLOUD_SERVICE_TYPES:
+        return []
+    entry = {
+        "resource_type": RESOURCE_TYPES.get(key, ""),
+        "resource_spec": "",
+        "resource_spec_desc": f"Service '{service}' is known but spec discovery requires BSS API access.",
+    }
+    if keyword and keyword.lower() not in entry["resource_spec_desc"].lower():
+        return []
+    return [entry]
+
 async def price_discover(
     service: str,
     region: str | None = None,
@@ -71,10 +89,19 @@ async def price_discover(
             backend.discover_specs, service, region=region, keyword=keyword
         )
     except BssAccessDenied:
-        raise ToolError(
-            f"BSS API access denied (CBC.0156). Cannot discover specs for '{service}'. "
-            f"Known services: {', '.join(sorted(CLOUD_SERVICE_TYPES.keys()))}"
-        )
+        specs = _catalog_fallback_specs(service, keyword=keyword)
+        if not specs:
+            raise ToolError(
+                f"BSS API access denied (CBC.0156). Cannot discover specs for '{service}'. "
+                f"Known services: {', '.join(sorted(CLOUD_SERVICE_TYPES.keys()))}"
+            )
+        return {
+            "service": service,
+            "region": region,
+            "specs": specs,
+            "count": len(specs),
+            "source": "catalog_fallback",
+        }
     except PricingNotAvailable:
         raise ToolError(
             f"Pricing not available for '{service}'. "
@@ -88,6 +115,38 @@ async def price_discover(
         "specs": specs,
         "count": len(specs),
     }
+
+def price_share(quote_id: str) -> dict[str, object]:
+    """Generate a shareable URL for a quote on the HWC price calculator."""
+
+    def share() -> dict[str, object]:
+        store = get_quote_store()
+        result = store.get(uuid.UUID(quote_id))
+        services = [item.service for item in result.items]
+        primary_service = services[0] if services else None
+
+        if primary_service and primary_service in CLOUD_SERVICE_TYPES:
+            calculator_url = (
+                "https://www.huaweicloud.com/intl/en-us/pricing/calculator.html"
+                f"#/{primary_service}"
+            )
+            method = "calculator_service_page"
+        else:
+            calculator_url = "https://www.huaweicloud.com/intl/en-us/pricing.html"
+            method = "calculator_landing_page"
+
+        return {
+            "quote_id": quote_id,
+            "share_url": calculator_url,
+            "method": method,
+            "services": services,
+            "note": (
+                "The URL navigates to the calculator section for the primary service. "
+                "Quote parameters must be re-entered in the calculator."
+            ),
+        }
+
+    return _run_tool_call(share)
 
 def price_export(
     quote_id: str,
@@ -143,3 +202,4 @@ def register_pricing_tools(mcp: FastMCP):
     mcp.tool()(price_export)
     mcp.tool()(price_list_quotes)
     mcp.tool()(price_get_quote)
+    mcp.tool()(price_share)

@@ -1,144 +1,92 @@
 # mcp-hwc
 
-Huawei Cloud MCP server for provisioning, operating, and inspecting cloud resources with a mix of direct service integrations, SDK-backed tools, and execution helpers for SSH, Kubernetes, and Helm.
+Control Huawei Cloud from an AI assistant. This is an **MCP server** for Huawei Cloud: it lets tools like Claude Code or OpenCode create servers, deploy containers, query logs, estimate prices, and run commands on your cloud resources — you just ask in plain language.
 
-## What It Does
+## New to MCP?
 
-- exposes compact workflow tools for common provisioning tasks
-- keeps generic Huawei Cloud SDK operations available for advanced cases
-- supports direct OBS, SSH, SWR image push, FunctionGraph deploy, and LTS log query workflows
-- provides least-input defaults for common provisioning flows
-- supports Kubernetes and Helm operations against CCE clusters
+MCP (Model Context Protocol) is how AI assistants talk to external systems. An MCP server is a small program that runs on your machine and exposes "tools" (like `ecs_create_vm` or `price_quote`) that the assistant can call on your behalf.
 
-## Tooling Model
+You never call these tools yourself. You tell your assistant *"create a small Ubuntu VM in São Paulo"*, and it picks the right tool, fills in sensible defaults, and asks you only when a choice really matters (cost, region, security).
 
-The server is split into three layers.
+## Quick start
 
-1. Discovery
-- `huaweicloud_list_services`
-- `huaweicloud_summarize_capabilities`
-- `huaweicloud_resolve_defaults`
-
-2. Workflow helpers
-- ECS: `ecs_create_vm`
-- OBS: `obs_*`
-- SSH: `ssh_*`
-- SWR: `swr_upload_image`
-- FunctionGraph: `functiongraph_deploy_code`
-- LTS: `lts_query_logs`
-- CCE access: `cce_get_kubeconfig`
-- Kubernetes: `k8s_apply_manifest`, `k8s_get_resources`, `k8s_wait`, `k8s_logs`, `k8s_exec`
-- Helm: `helm_install`, `helm_upgrade`, `helm_uninstall`
-
-3. Generic SDK execution
-- `huaweicloud_list_operations`
-- `huaweicloud_describe_operation`
-- `huaweicloud_call_operation`
-
-Generated service-specific SDK tools such as `ecs_call_operation` still exist in code, but are hidden from the MCP catalog by default to reduce model context. Set `MCP_HWC_ENABLE_SERVICE_TOOLS=all` or a comma-separated allowlist such as `MCP_HWC_ENABLE_SERVICE_TOOLS=ecs,vpc,ims` to expose them.
-
-## Service Coverage
-
-Supported service families include:
-
-- Compute and platforms: `ecs`, `ims`, `cce`, `mrs`, `functiongraph`, `cae`, `workspace`, `workspaceapp`, `asm`, `swr`, `ucs`
-- Databases and data: `rds`, `dws`, `cloudtable`, `gaussdb`, `taurusdb`, `gaussdb_nosql`, `gaussdb_opengauss`, `dds`, `dcs`, `ddm`, `das`, `drs`, `ugo`, `css`
-- Networking: `vpc`, `nat`, `dns`, `eip`, `elb`, `er`, `vpcep`, `vpn`, `dc`, `geip`, `ga`, `cc`, `esw`, `cdn`, `apig`
-- Storage and backup: `obs`, `evs`, `sfs`, `cbr`
-- Messaging: `dms`, `kafka`, `rabbitmq`, `rocketmq`, `smn`
-- Ops, governance, and security: `apm`, `aom`, `lts`, `ces`, `cts`, `config`, `organizations`, `kms`, `iam`, `secmaster`, `cfw`, `waf`, `aad`, `antiddos`, `cgs`, `cbh`
-- AI and dev services: `modelarts_studio`, `maas`, `metastudio`, `ocr`, `codearts_artifact`, `codearts_build`, `codearts_check`, `codearts_deploy`, `codearts_pipeline`, `codearts_repo`, `codehub`
-
-Aliases are supported where useful. Examples:
-
-- `geminidb` -> `gaussdb_nosql`
-- `vbs` -> `cbr`
-- `cloud_eye` -> `ces`
-
-Current gaps:
-
-- standalone `ModelArts` core APIs are not wired because Huawei does not publish the Python SDK package needed here
-- `cci` is not wired because there is no published `huaweicloudsdkcci` package
-
-## Execution Backends
-
-Kubernetes and Helm tools support:
-
-- `execution_backend="local"`: use binaries installed on the MCP host
-- `execution_backend="container"`: run through a container runtime on the MCP host
-- `execution_backend="auto"`: prefer local binaries, then fall back to containers
-
-Default containerized runners are configured for:
-
-- `kubectl`
-- `helm`
-
-This avoids depending on the end user machine for those tools.
-
-## Setup
-
-1. Copy `.env.example` to `.env`
-2. Set credentials
-3. Install dependencies
-4. Start the server
-
-Example:
-
-```dotenv
-HWC_AK=your-access-key-id
-HWC_SK=your-secret-access-key
-# HWC_SECURITY_TOKEN=temporary-token
-```
-
-Run:
+You need [uv](https://docs.astral.sh/uv/) installed, and a Huawei Cloud **Access Key** (AK) and **Secret Key** (SK) — create them in the Huawei Cloud console under *My Credentials → Access Keys*.
 
 ```bash
+# 1. Get the code and install dependencies
+git clone <this-repo> && cd mcp-hwc
 uv sync --dev
-uv run mcp-hwc
+
+# 2. Set your credentials
+cp .env.example .env
+# edit .env and fill in HWC_AK and HWC_SK
 ```
 
-Required environment variables:
+Then connect it to your assistant:
 
-- `HWC_AK`
-- `HWC_SK`
+**Claude Code**
 
-Optional:
+```bash
+claude mcp add hwc -- uv --directory /path/to/mcp-hwc run mcp-hwc
+```
 
-- `HWC_SECURITY_TOKEN`
-
-Most flows should not require `HWC_REGION`, `HWC_PROJECT_ID`, or service-specific environment variables. Region and project are resolved from tool arguments, payloads, and IAM when possible.
-
-## Installation in OpenCode
-Add the MCP server to your OpenCode configuration file. This is usually `~/.config/opencode/opencode.jsonc` or `.opencode/opencode.json` in the project root.
+**OpenCode** — add to `~/.config/opencode/opencode.jsonc` (or `.opencode/opencode.json` in a project):
 
 ```json
 "mcp": {
   "hwc": {
     "type": "local",
-    "command": ["uv", "run", "mcp-hwc"],
+    "command": ["uv", "--directory", "/path/to/mcp-hwc", "run", "mcp-hwc"],
     "enabled": true
   }
 }
 ```
 
-## Installation in Claude Code
-Install the server by running this command in your terminal:
-`claude mcp add hwc -- uv run mcp-hwc`
+That's it. Open your assistant and try one of the prompts below.
 
-Environment variables like HWC_AK and HWC_SK can be passed using the `--env` flag if they are not already exported.
+## What can I ask for?
 
-## Try it using MaaS
-Test the MCP server using ModelArts Studio (MaaS). This is our accessible AI model API. Get started here: https://www.huaweicloud.com/intl/en-us/product/maas.html.
+- *"Create a small Debian VM in Santiago I can SSH into"* → provisions the VPC, subnet, security group, and server, and returns the IP
+- *"How much would a c6.large.2 ECS cost per month in São Paulo?"* → returns a price quote you can export or share
+- *"Deploy this folder as a FunctionGraph function"*
+- *"Push this Docker image to SWR"*
+- *"Get the kubeconfig for my CCE cluster and show failing pods"*
+- *"Query the LTS logs of my app for errors in the last hour"*
+- *"Run `SHOW DATABASES` in Hive on my MRS cluster"* or *"list the Kafka topics on cluster analytics"*
 
-## Notes
+## Configuration
 
-- Use `huaweicloud_summarize_capabilities` when you want a fast answer about what a service can do through the SDK surface.
-- Use `huaweicloud_resolve_defaults` when the request is vague and you want the least-input provisioning profile first.
-- Use workflow tools such as `ecs_create_vm` before generic SDK tools.
-- Use the generic SDK tools when no workflow helper covers the operation.
-- Use `cce_get_kubeconfig` before `k8s_*` or `helm_*` when operating on a CCE cluster.
+Set these in `.env` (or export them):
 
-## Testing
+| Variable | Required | What it is |
+|---|---|---|
+| `HWC_AK` | yes | Access Key ID |
+| `HWC_SK` | yes | Secret Access Key |
+| `HWC_SECURITY_TOKEN` | no | Only for temporary credentials |
+| `HWC_REGION`, `HWC_PROJECT_ID` | no | Usually resolved automatically from your request and IAM |
+| `MCP_HWC_ENABLE_SERVICE_TOOLS` | no | Expose per-service SDK tools (`all` or e.g. `ecs,vpc`); hidden by default to keep the assistant's context small |
+
+## Multiple accounts
+
+Keep one credential file per account next to `.env`: e.g. `.env.work`, `.env.personal` (same format as `.env`; they are gitignored). Then just ask your assistant:
+
+> "Switch to my work account"
+
+It calls `hwc_switch_profile("work")` and every later call uses that account — no restart. `hwc_list_profiles` shows what's available and which is active. `.env` itself is the `default` profile.
+
+Prefer picking the account at startup instead? Register the server twice (e.g. `hwc-work`, `hwc-personal`), each with `MCP_HWC_ENV_FILE` pointing at a different file.
+
+## How it works
+
+The server offers tools in three layers, and the assistant picks the highest one that fits:
+
+1. **Discovery** — `huaweicloud_list_services`, `huaweicloud_summarize_capabilities`, `huaweicloud_resolve_defaults`: find out what's possible and get least-input defaults.
+2. **Workflow helpers** — one-call tools for common jobs: `ecs_create_vm`, `obs_*` (object storage), `ssh_*`, `swr_upload_image`, `functiongraph_deploy_code`, `lts_query_logs`, `cce_get_kubeconfig`, `k8s_*`, `helm_*`, `price_*` (quotes and pricing), `mrs_*` (Hive/Spark SQL, jobs, and node/component CLIs on MRS clusters; normal-mode clusters, SSH defaults via `MRS_SSH_USER`/`MRS_SSH_KEY`/`MRS_SSH_PASSWORD`).
+3. **Generic SDK access** — `huaweicloud_list_operations` / `describe_operation` / `call_operation` can call any operation of any supported Huawei Cloud SDK, for the cases no helper covers.
+
+Coverage spans 70+ services (ECS, CCE, RDS, OBS, VPC, MRS, DMS, and more) with aliases like `geminidb` → `gaussdb_nosql`. Not wired: ModelArts core and CCI (no published Python SDKs). `kubectl` and `helm` run from local binaries or fall back to a container, so your machine doesn't need them installed.
+
+## Development
 
 ```bash
 uv run pytest

@@ -23,6 +23,7 @@ CLOUD_SERVICE_TYPES: dict[str, str] = {
     "dns": "hws.service.type.dns",
     "waf": "hws.service.type.waf",
     "cdn": "hws.service.type.cdn",
+    "vpn": "hws.service.type.vpn",
 }
 
 # BSS on-demand billing unit per service.
@@ -57,6 +58,7 @@ RESOURCE_TYPES: dict[str, str] = {
     "dns": "hws.resource.type.dns",
     "waf": "hws.resource.type.waf",
     "cdn": "hws.resource.type.cdn",
+    "vpn": "hws.resource.type.vpn",
 }
 
 SERVICE_MAP = CLOUD_SERVICE_TYPES

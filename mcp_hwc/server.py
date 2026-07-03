@@ -403,18 +403,35 @@ from mcp_hwc.routers.k8s import (
     register_k8s_tools,
 )
 from mcp_hwc.routers.pricing import (
+    _catalog_fallback_specs,
     price_quote,
     price_discover,
     price_export,
     price_list_quotes,
     price_get_quote,
+    price_share,
     register_pricing_tools,
+)
+from mcp_hwc.routers.mrs import (
+    mrs_list_clusters,
+    mrs_run_sql,
+    mrs_submit_job,
+    mrs_node_execute,
+    mrs_component_cli,
+    register_mrs_tools,
+)
+from mcp_hwc.routers.profiles import (
+    hwc_list_profiles,
+    hwc_switch_profile,
+    register_profile_tools,
 )
 
 # Register tools with the MCP server
 register_obs_tools(mcp)
 register_k8s_tools(mcp)
 register_pricing_tools(mcp)
+register_mrs_tools(mcp)
+register_profile_tools(mcp)
 
 
 @mcp.tool()

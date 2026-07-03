@@ -138,6 +138,118 @@ _SERVICE_DEFAULTS: dict[str, dict[str, Any]] = {
         "readiness_checks": ["instance running", "endpoint assigned"],
         "post_create_steps": ["client connection validation"],
     },
+    "sfs": {
+        "deployment_style": "file-storage",
+        "workflow_tool": "sfs_create_accessible_share",
+        "defaults": {
+            "share_type": "STANDARD",
+            "share_proto": "NFS",
+            "size_gb": 500,
+        },
+        "readiness_checks": ["share available", "export location assigned"],
+        "post_create_steps": ["mount validation"],
+    },
+    "vpc": {
+        "deployment_style": "networking",
+        "defaults": {
+            "cidr": "192.168.0.0/16",
+        },
+        "readiness_checks": ["vpc exists"],
+        "post_create_steps": [],
+    },
+    "eip": {
+        "deployment_style": "networking",
+        "defaults": {
+            "bandwidth_size_mbit": 5,
+            "bandwidth_share_type": "PER",
+            "charge_mode": "traffic",
+        },
+        "readiness_checks": ["eip assigned"],
+        "post_create_steps": [],
+    },
+    "elb": {
+        "deployment_style": "load-balancing",
+        "defaults": {
+            "type": "External",
+            "public_access": True,
+        },
+        "readiness_checks": ["loadbalancer available", "listener configured"],
+        "post_create_steps": ["health check validation"],
+    },
+    "nat": {
+        "deployment_style": "networking",
+        "defaults": {
+            "type": "external",
+        },
+        "readiness_checks": ["gateway available"],
+        "post_create_steps": [],
+    },
+    "dds": {
+        "deployment_style": "managed-database",
+        "defaults": {
+            "flavor_policy": {
+                "selection_strategy": "smallest-sane",
+            },
+            "storage": {"type": "ULTRAHIGH", "size_gb": 40},
+            "public_access": False,
+        },
+        "readiness_checks": ["instance running", "endpoint assigned"],
+        "post_create_steps": ["connection test"],
+    },
+    "dms": {
+        "deployment_style": "messaging",
+        "defaults": {
+            "public_access": False,
+            "storage": {"type": "high"},
+        },
+        "readiness_checks": ["instance running", "endpoint assigned"],
+        "post_create_steps": ["topic or queue validation"],
+    },
+    "kms": {
+        "deployment_style": "security",
+        "defaults": {
+            "key_algorithm": "AES-256",
+            "key_usage": "ENCRYPT_DECRYPT",
+        },
+        "readiness_checks": ["key available"],
+        "post_create_steps": [],
+    },
+    "smn": {
+        "deployment_style": "messaging",
+        "defaults": {},
+        "readiness_checks": ["topic exists"],
+        "post_create_steps": [],
+    },
+    "ces": {
+        "deployment_style": "observability",
+        "defaults": {},
+        "readiness_checks": ["alarm rule created"],
+        "post_create_steps": [],
+    },
+    "dns": {
+        "deployment_style": "networking",
+        "defaults": {
+            "zone_type": "public",
+        },
+        "readiness_checks": ["zone exists"],
+        "post_create_steps": [],
+    },
+    "waf": {
+        "deployment_style": "security",
+        "defaults": {
+            "mode": "block",
+        },
+        "readiness_checks": ["policy active"],
+        "post_create_steps": [],
+    },
+    "cdn": {
+        "deployment_style": "content-delivery",
+        "defaults": {
+            "service_area": "outside_mainland_china",
+        },
+        "readiness_checks": ["domain configured"],
+        "post_create_steps": [],
+    },
 }
 
 
@@ -167,7 +279,7 @@ def resolve_service_defaults(
     defaults = dict(profile.get("defaults", {}))
     if resolved_spec.name in {"ecs", "cce", "functiongraph"}:
         defaults["exposure"] = exposure
-    if exposure != "auto" and resolved_spec.name in {"ecs", "rds", "css", "dcs"}:
+    if exposure != "auto" and "public_access" in defaults:
         defaults["public_access"] = exposure == "public"
     if resolved_spec.name == "cce":
         defaults["public_api"] = exposure == "public"
@@ -222,6 +334,32 @@ def _minimal_tool_input(
         if exposure == "public":
             payload["ssh_cidr"] = "<your-ip>/32"
         return payload
+    if service_name == "cce":
+        return {
+            "region": region or "<region>",
+            "public_api": exposure == "public",
+        }
+    if service_name == "rds":
+        return {
+            "region": region or "<region>",
+            "public_access": exposure == "public",
+        }
+    if service_name == "sfs":
+        return {
+            "region": region or "<region>",
+            "client_cidr": "<your-ip>/32",
+        }
+    if service_name == "functiongraph":
+        return {
+            "region": region or "<region>",
+        }
+    if service_name == "swr":
+        return {
+            "region": region or "<region>",
+            "source_image": "<image>",
+            "namespace": "<namespace>",
+            "repository": "<repo>",
+        }
     return None
 
 
