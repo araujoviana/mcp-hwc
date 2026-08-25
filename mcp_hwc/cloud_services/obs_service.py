@@ -6,8 +6,8 @@ from typing import Any, Protocol
 
 from obs import ObsClient
 
-from mcp_hwc.core.config import ObsConfig
 from mcp_hwc.cloud_services.obs_endpoints import build_obs_server, normalize_region
+from mcp_hwc.core.config import ObsConfig
 
 
 class ObsServiceError(RuntimeError):
@@ -36,14 +36,10 @@ class ObsClientProtocol(Protocol):
     def headObject(self, bucketName: str, objectKey: str, **kwargs: Any) -> Any:  # noqa: N802
         ...
 
-    def putContent(
-        self, bucketName: str, objectKey: str, content: str, **kwargs: Any
-    ) -> Any:  # noqa: N802
+    def putContent(self, bucketName: str, objectKey: str, content: str, **kwargs: Any) -> Any:  # noqa: N802
         ...
 
-    def putFile(
-        self, bucketName: str, objectKey: str, file_path: str, **kwargs: Any
-    ) -> Any:  # noqa: N802
+    def putFile(self, bucketName: str, objectKey: str, file_path: str, **kwargs: Any) -> Any:  # noqa: N802
         ...
 
     def deleteBucket(self, bucketName: str, **kwargs: Any) -> Any:  # noqa: N802
@@ -158,12 +154,8 @@ class ObsService:
                     "key": _get_attr(content, "key"),
                     "size": _get_attr(content, "size"),
                     "etag": _get_attr(content, "etag"),
-                    "last_modified": _get_attr(
-                        content, "lastModified", "last_modified"
-                    ),
-                    "storage_class": _get_attr(
-                        content, "storageClass", "storage_class"
-                    ),
+                    "last_modified": _get_attr(content, "lastModified", "last_modified"),
+                    "storage_class": _get_attr(content, "storageClass", "storage_class"),
                     "owner_id": _get_attr(owner, "owner_id", "ownerId"),
                     "owner_name": _get_attr(owner, "owner_name", "ownerName"),
                 }
@@ -182,9 +174,7 @@ class ObsService:
             "prefix": _get_attr(body, "prefix"),
             "marker": _get_attr(body, "marker"),
             "max_keys": _get_attr(body, "max_keys", "maxKeys", default=max_keys),
-            "is_truncated": _get_attr(
-                body, "is_truncated", "isTruncated", default=False
-            ),
+            "is_truncated": _get_attr(body, "is_truncated", "isTruncated", default=False),
             "next_marker": _get_attr(body, "next_marker", "nextMarker"),
             "common_prefixes": common_prefixes,
             "objects": objects,
@@ -478,9 +468,7 @@ class ObsService:
         )
         location = _get_attr(response.body, "location")
         if not location:
-            raise ObsServiceError(
-                f"OBS did not return a location for bucket '{bucket_name}'"
-            )
+            raise ObsServiceError(f"OBS did not return a location for bucket '{bucket_name}'")
 
         normalized = normalize_region(location)
         self._bucket_locations[bucket_name] = normalized
@@ -522,9 +510,7 @@ class ObsService:
         if request_id:
             details.append(f"request_id={request_id}")
 
-        details_text = (
-            ", ".join(details) if details else "no details returned by OBS SDK"
-        )
+        details_text = ", ".join(details) if details else "no details returned by OBS SDK"
         raise ObsServiceError(f"Failed to {operation}: {details_text}")
 
 

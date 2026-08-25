@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-
 _VALID_PERIOD_TYPES = ("on_demand", "month", "year")
 _HOURS_PER_MONTH = 730
 
@@ -76,9 +75,9 @@ class QuoteResult:
             if item.period_type == "on_demand":
                 total += item.unit_price * _HOURS_PER_MONTH * item.quantity
             elif item.period_type == "month":
-                total += item.unit_price * item.period_num * item.quantity
+                total += item.unit_price * item.quantity
             elif item.period_type == "year":
-                total += (item.unit_price / 12) * item.period_num * item.quantity
+                total += (item.unit_price / (12 * item.period_num)) * item.quantity
         return total
 
     @property

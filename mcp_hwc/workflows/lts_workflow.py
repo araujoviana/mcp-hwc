@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 import json
 import re
+from datetime import datetime, timedelta, timezone
 
 from mcp_hwc.cloud_services.compute import extract_first_string, select_named_resource
 from mcp_hwc.core.errors import HelperToolError
@@ -10,18 +10,20 @@ from mcp_hwc.core.sdk_service import HuaweiCloudSdkService
 
 
 def normalize_time_ms(
-    value: str | int | None,
+    value: str | int | float | None,
     *,
     default: datetime,
 ) -> str:
     if value is None:
         resolved = default
-    elif isinstance(value, int):
-        if value > 10**12:
-            return str(value)
-        return str(value * 1000)
+    elif isinstance(value, (int, float)):
+        val_f = float(value)
+        if val_f > 10**12:
+            return str(int(val_f))
+        return str(int(val_f * 1000))
     else:
-        text = value.strip()
+        text = str(value).strip()
+
         if not text:
             resolved = default
         elif text.isdigit():
@@ -116,9 +118,7 @@ def resolve_lts_log_stream(
         )
 
     streams = [
-        item
-        for item in response["response"].get("log_streams") or []
-        if isinstance(item, dict)
+        item for item in response["response"].get("log_streams") or [] if isinstance(item, dict)
     ]
     selected = select_named_resource(
         streams,

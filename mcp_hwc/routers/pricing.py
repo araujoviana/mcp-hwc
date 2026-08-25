@@ -1,20 +1,24 @@
 from __future__ import annotations
+
 import asyncio
 import uuid
 from typing import TYPE_CHECKING
+
 from mcp.server.fastmcp.exceptions import ToolError
+
+from mcp_hwc.pricing.bss_pricing import BssAccessDenied, PricingNotAvailable
+from mcp_hwc.pricing.catalog import CLOUD_SERVICE_TYPES
+from mcp_hwc.pricing.models import ResourceDescriptor
+from mcp_hwc.pricing.tools import export_csv, export_json, export_terraform, format_text
 from mcp_hwc.server import (
     _run_tool_call,
     get_bss_pricing_backend,
     get_quote_store,
 )
-from mcp_hwc.pricing.models import ResourceDescriptor
-from mcp_hwc.pricing.bss_pricing import BssAccessDenied, PricingNotAvailable
-from mcp_hwc.pricing.catalog import CLOUD_SERVICE_TYPES
-from mcp_hwc.pricing.tools import export_csv, export_json, export_terraform, format_text
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
+
 
 async def price_quote(
     resources: list[dict[str, object]],
@@ -32,15 +36,17 @@ async def price_quote(
         if size is not None:
             size = float(size)
 
-        descs.append(ResourceDescriptor(
-            service=str(r["service"]),
-            spec=str(r["spec"]),
-            region=r_region,
-            period_type=str(r["period_type"]),
-            period_num=int(r.get("period_num", 1)),
-            quantity=int(r.get("quantity", 1)),
-            size=size,
-        ))
+        descs.append(
+            ResourceDescriptor(
+                service=str(r["service"]),
+                spec=str(r["spec"]),
+                region=r_region,
+                period_type=str(r["period_type"]),
+                period_num=int(r.get("period_num", 1)),
+                quantity=int(r.get("quantity", 1)),
+                size=size,
+            )
+        )
 
     backend = get_bss_pricing_backend()
     try:
@@ -57,6 +63,7 @@ async def price_quote(
         "text": format_text(result),
         **result.to_dict(),
     }
+
 
 def _catalog_fallback_specs(
     service: str,
@@ -75,6 +82,7 @@ def _catalog_fallback_specs(
     if keyword and keyword.lower() not in entry["resource_spec_desc"].lower():
         return []
     return [entry]
+
 
 async def price_discover(
     service: str,
@@ -116,6 +124,7 @@ async def price_discover(
         "count": len(specs),
     }
 
+
 def price_share(quote_id: str) -> dict[str, object]:
     """Generate a shareable URL for a quote on the HWC price calculator."""
 
@@ -127,8 +136,7 @@ def price_share(quote_id: str) -> dict[str, object]:
 
         if primary_service and primary_service in CLOUD_SERVICE_TYPES:
             calculator_url = (
-                "https://www.huaweicloud.com/intl/en-us/pricing/calculator.html"
-                f"#/{primary_service}"
+                f"https://www.huaweicloud.com/intl/en-us/pricing/calculator.html#/{primary_service}"
             )
             method = "calculator_service_page"
         else:
@@ -147,6 +155,7 @@ def price_share(quote_id: str) -> dict[str, object]:
         }
 
     return _run_tool_call(share)
+
 
 def price_export(
     quote_id: str,
@@ -171,6 +180,7 @@ def price_export(
 
     return _run_tool_call(export)
 
+
 def price_list_quotes(
     limit: int = 20,
     service: str | None = None,
@@ -182,6 +192,7 @@ def price_list_quotes(
         return {"quotes": store.list_quotes(limit=limit, service=service)}
 
     return _run_tool_call(list_quotes)
+
 
 def price_get_quote(quote_id: str) -> dict[str, object]:
     """Retrieve a specific saved quote by ID."""
@@ -195,6 +206,7 @@ def price_get_quote(quote_id: str) -> dict[str, object]:
         }
 
     return _run_tool_call(get_quote)
+
 
 def register_pricing_tools(mcp: FastMCP):
     mcp.tool()(price_quote)

@@ -16,7 +16,12 @@ from huaweicloudsdkbss.v2.model import (
 )
 from huaweicloudsdkcore.region.region import Region as SdkRegion
 
-from mcp_hwc.pricing.catalog import DEMAND_MEASURE_IDS, resolve_cloud_service_type, resolve_region, resolve_resource_type
+from mcp_hwc.pricing.catalog import (
+    DEMAND_MEASURE_IDS,
+    resolve_cloud_service_type,
+    resolve_region,
+    resolve_resource_type,
+)
 from mcp_hwc.pricing.models import QuoteItem, QuoteResult, ResourceDescriptor
 
 if TYPE_CHECKING:
@@ -137,8 +142,7 @@ class BssPricingBackend:
 
     def _quote_subscription(self, resources: list[ResourceDescriptor]) -> list[QuoteItem]:
         product_infos = [
-            self._build_period_product_info(r, index=i)
-            for i, r in enumerate(resources)
+            self._build_period_product_info(r, index=i) for i, r in enumerate(resources)
         ]
 
         project_id = self._project_id_for(resources)
@@ -155,8 +159,7 @@ class BssPricingBackend:
 
     def _quote_on_demand(self, resources: list[ResourceDescriptor]) -> list[QuoteItem]:
         product_infos = [
-            self._build_demand_product_info(r, index=i)
-            for i, r in enumerate(resources)
+            self._build_demand_product_info(r, index=i) for i, r in enumerate(resources)
         ]
 
         project_id = self._project_id_for(resources)
@@ -173,7 +176,9 @@ class BssPricingBackend:
         if not results:
             raise PricingNotAvailable("BSS on-demand pricing returned no results")
 
-        return self._resolve_quote_items(results, resources, period_type_override="on_demand", period_num_override=1)
+        return self._resolve_quote_items(
+            results, resources, period_type_override="on_demand", period_num_override=1
+        )
 
     @staticmethod
     def _resolve_quote_items(
@@ -192,17 +197,22 @@ class BssPricingBackend:
             if not (0 <= idx < len(resources)):
                 continue
             desc = resources[idx]
-            amount = float(result.official_website_amount or 0)
+            total_amount = float(result.official_website_amount or 0)
+            unit_price = total_amount / desc.quantity if desc.quantity > 0 else total_amount
             items.append(
                 QuoteItem(
                     service=desc.service,
                     spec=desc.spec,
                     region=desc.region,
-                    period_type=period_type_override if period_type_override is not None else desc.period_type,
-                    period_num=period_num_override if period_num_override is not None else desc.period_num,
+                    period_type=period_type_override
+                    if period_type_override is not None
+                    else desc.period_type,
+                    period_num=period_num_override
+                    if period_num_override is not None
+                    else desc.period_num,
                     quantity=desc.quantity,
                     size=desc.size,
-                    unit_price=amount,
+                    unit_price=unit_price,
                     currency="USD",
                 )
             )

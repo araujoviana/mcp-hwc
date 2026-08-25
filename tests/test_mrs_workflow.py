@@ -2,7 +2,6 @@ import pytest
 
 from mcp_hwc.workflows import mrs
 
-
 # Fixtures use the camelCase wire names the v1 API actually returns
 # (sanitize_for_serialization emits attribute_map keys, e.g. "clusterId").
 NORMAL_CLUSTER = {
@@ -189,9 +188,7 @@ def test_run_sql_submits_and_polls_until_finished() -> None:
 
 def test_run_sql_returns_immediately_when_finished() -> None:
     v1 = clusters_service([NORMAL_CLUSTER])
-    v2 = FakeSdkService(
-        {"execute_sql": {"id": "sql-2", "status": "FINISHED", "content": [["1"]]}}
-    )
+    v2 = FakeSdkService({"execute_sql": {"id": "sql-2", "status": "FINISHED", "content": [["1"]]}})
     factory = make_factory({("mrs", "v1"): v1, ("mrs", "v2"): v2})
 
     result = mrs.run_sql(

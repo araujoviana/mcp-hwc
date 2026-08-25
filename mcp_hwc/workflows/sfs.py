@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Callable
-from datetime import datetime, timezone
 import shlex
 import uuid
+from collections.abc import Callable
+from datetime import datetime, timezone
 
 from mcp_hwc.cloud_services.compute import (
     create_ecs_security_group,
@@ -17,8 +17,8 @@ from mcp_hwc.cloud_services.compute import (
     resolve_vpc_and_subnet,
 )
 from mcp_hwc.core.errors import HelperToolError
-from mcp_hwc.utils.polling import DEFAULT_POLL_INTERVAL_SECONDS, wait_for_service_value
 from mcp_hwc.core.sdk_service import HuaweiCloudSdkService
+from mcp_hwc.utils.polling import DEFAULT_POLL_INTERVAL_SECONDS, wait_for_service_value
 
 SdkServiceFactory = Callable[..., HuaweiCloudSdkService]
 
@@ -52,7 +52,9 @@ def mount_sfs_share_via_ssh(
             )
         return result
 
-    run("dpkg -s nfs-common >/dev/null 2>&1 || { apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y nfs-common; }")
+    run(
+        "dpkg -s nfs-common >/dev/null 2>&1 || { apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y nfs-common; }"
+    )
     run(f"mkdir -p {q_mount}")
     run(f"mount -t nfs -o vers=3,timeo=600,noresvport,nolock {q_export} {q_mount}")
     run(f"printf 'sfs proof %s\\n' \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\" > {q_mount}/proof.txt")
@@ -122,10 +124,13 @@ def create_accessible_share(
 
     resolved_availability_zone = availability_zone
     if resolved_availability_zone is None:
-        share_types = sfs_service.call_operation(
-            "list_share_types",
-            {"limit": 100, "offset": 0},
-        )["response"].get("share_types") or []
+        share_types = (
+            sfs_service.call_operation(
+                "list_share_types",
+                {"limit": 100, "offset": 0},
+            )["response"].get("share_types")
+            or []
+        )
         resolved_availability_zone = pick_sfs_availability_zone(
             share_types,
             requested_share_type=normalized_share_type,
@@ -179,10 +184,13 @@ def create_accessible_share(
     if not isinstance(export_location, str) or not export_location.strip():
         raise HelperToolError("SFS did not become mountable")
 
-    perm_rules = sfs_service.call_operation(
-        "list_perm_rules",
-        {"share_id": share_id, "limit": 100, "offset": 0},
-    )["response"].get("rules") or []
+    perm_rules = (
+        sfs_service.call_operation(
+            "list_perm_rules",
+            {"share_id": share_id, "limit": 100, "offset": 0},
+        )["response"].get("rules")
+        or []
+    )
     for rule in perm_rules:
         if rule.get("ip_cidr") == "*":
             rule_id = rule.get("id")

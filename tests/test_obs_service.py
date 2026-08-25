@@ -1,16 +1,14 @@
-from types import SimpleNamespace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from mcp_hwc.core.config import ObsConfig
 from mcp_hwc.cloud_services.obs_endpoints import OBS_GLOBAL_SERVER, build_obs_server
 from mcp_hwc.cloud_services.obs_service import ObsService, ObsServiceError
+from mcp_hwc.core.config import ObsConfig
 
 
-def make_response(
-    status: int, body: object | None = None, **extra: object
-) -> SimpleNamespace:
+def make_response(status: int, body: object | None = None, **extra: object) -> SimpleNamespace:
     payload = {
         "status": status,
         "body": body,
@@ -117,9 +115,7 @@ def test_list_objects_auto_resolves_bucket_region() -> None:
                                 etag="etag-1",
                                 lastModified="2026-01-01T00:00:00.000Z",
                                 storageClass="STANDARD",
-                                owner=SimpleNamespace(
-                                    owner_id="123", owner_name="demo"
-                                ),
+                                owner=SimpleNamespace(owner_id="123", owner_name="demo"),
                             )
                         ],
                     ),

@@ -5,3 +5,7 @@ __pycache__/
 *.bak
 .env.*
 !.env.example
+reference/
+.worktrees/
+.ruff_cache/
+

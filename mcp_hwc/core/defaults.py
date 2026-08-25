@@ -265,9 +265,7 @@ def resolve_service_defaults(
         raise ValueError(f"Unsupported intent '{intent}'. Supported intents: {supported}")
     if exposure not in _VALID_EXPOSURES:
         supported = ", ".join(sorted(_VALID_EXPOSURES))
-        raise ValueError(
-            f"Unsupported exposure '{exposure}'. Supported exposures: {supported}"
-        )
+        raise ValueError(f"Unsupported exposure '{exposure}'. Supported exposures: {supported}")
 
     resolved_spec = resolve_service_spec(service_name)
     normalized_region = normalize_region_input(region) if region else None

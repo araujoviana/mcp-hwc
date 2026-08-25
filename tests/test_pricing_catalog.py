@@ -7,8 +7,8 @@ from mcp_hwc.pricing.catalog import (
     RESOURCE_TYPES,
     SERVICE_MAP,
     resolve_cloud_service_type,
-    resolve_resource_type,
     resolve_region,
+    resolve_resource_type,
 )
 
 

@@ -1,5 +1,4 @@
 import pytest
-
 from huaweicloudsdkcore.auth.credentials import GlobalCredentials
 from huaweicloudsdkecs.v2.model.create_servers_response import CreateServersResponse
 from huaweicloudsdkrds.v3.model.create_instance_response import CreateInstanceResponse

@@ -36,6 +36,15 @@ class CloudApiConfig:
     security_token: str | None = None
     endpoint: str | None = None
 
+    def __repr__(self) -> str:
+        token_repr = "'***'" if self.security_token else "None"
+        return (
+            f"CloudApiConfig(access_key_id='{self.access_key_id}', "
+            f"secret_access_key='***', project_id={self.project_id!r}, "
+            f"domain_id={self.domain_id!r}, region={self.region!r}, "
+            f"security_token={token_repr}, endpoint={self.endpoint!r})"
+        )
+
     @classmethod
     def from_env(
         cls,
@@ -96,9 +105,7 @@ class CloudApiConfig:
 
         resolved_endpoint = endpoint
         if resolved_endpoint is None:
-            resolved_endpoint = _first_present(
-                env_values, f"HWC_{service_key}_ENDPOINT"
-            )
+            resolved_endpoint = _first_present(env_values, f"HWC_{service_key}_ENDPOINT")
 
         missing = []
         if not access_key_id:
@@ -111,9 +118,7 @@ class CloudApiConfig:
             raise ConfigError(f"Missing {service_key} configuration: {missing_fields}")
 
         normalized_endpoint = (
-            _normalize_endpoint(resolved_endpoint)
-            if resolved_endpoint is not None
-            else None
+            _normalize_endpoint(resolved_endpoint) if resolved_endpoint is not None else None
         )
         normalized_region = (
             _normalize_cloud_region(resolved_region)
@@ -139,6 +144,14 @@ class ObsConfig:
     security_token: str | None = None
     region: str | None = None
     server: str | None = None
+
+    def __repr__(self) -> str:
+        token_repr = "'***'" if self.security_token else "None"
+        return (
+            f"ObsConfig(access_key_id='{self.access_key_id}', "
+            f"secret_access_key='***', security_token={token_repr}, "
+            f"region={self.region!r}, server={self.server!r})"
+        )
 
     @property
     def discovery_server(self) -> str:
@@ -267,8 +280,7 @@ def _normalize_endpoint(endpoint: str) -> str:
     parsed = urlparse(value)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ConfigError(
-            "Endpoint must be a valid URL, for example "
-            "https://ecs.ap-southeast-1.myhuaweicloud.com"
+            "Endpoint must be a valid URL, for example https://ecs.ap-southeast-1.myhuaweicloud.com"
         )
 
     return value.rstrip("/")

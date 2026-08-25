@@ -122,7 +122,6 @@ def test_catalog_fallback_specs_filters_by_keyword() -> None:
 
 
 def test_price_share_uses_service_hash(monkeypatch: pytest.MonkeyPatch) -> None:
-    from mcp_hwc.pricing.persistence import QuoteStore
     from mcp_hwc.server import price_share
 
     store = QuoteStore()

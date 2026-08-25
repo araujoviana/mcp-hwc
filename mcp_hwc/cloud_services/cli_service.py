@@ -1,10 +1,43 @@
-from __future__ import annotations
-
-from dataclasses import dataclass
-from pathlib import Path
+import re
 import shutil
 import subprocess
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Mapping, Sequence
+
+
+def _sanitize_command(command: Sequence[str]) -> str:
+    sanitized: list[str] = []
+    skip_next = False
+    for i, token in enumerate(command):
+        if skip_next:
+            sanitized.append("***")
+            skip_next = False
+            continue
+
+        token_str = str(token)
+        # Check flag with value in next token (-p <pass>, --password <pass>)
+        if token_str in {"-p", "--password", "--admin-pass", "--secret", "--token"}:
+            sanitized.append(token_str)
+            skip_next = True
+            continue
+
+        # Check flag=value (e.g. -e PGPASSWORD=..., --password=...)
+        if re.search(r"(?i)(password|secret|token|key)=", token_str):
+            key, _, _ = token_str.partition("=")
+            sanitized.append(f"{key}=***")
+        elif (
+            token_str == "-e"
+            and i + 1 < len(command)
+            and re.search(r"(?i)(password|secret|token|key)=", command[i + 1])
+        ):
+            sanitized.append(token_str)
+            key, _, _ = command[i + 1].partition("=")
+            sanitized.append(f"{key}=***")
+            skip_next = False
+        else:
+            sanitized.append(token_str)
+    return " ".join(sanitized)
 
 
 class CliServiceError(RuntimeError):
@@ -36,9 +69,7 @@ class CliService:
         container_image: str | None = None,
     ) -> ExecutionBackend:
         if backend not in {"auto", "local", "container"}:
-            raise ValueError(
-                "backend must be one of: auto, local, container"
-            )
+            raise ValueError("backend must be one of: auto, local, container")
 
         if backend == "local":
             self.resolve_local_binary(tool_name)
@@ -69,9 +100,7 @@ class CliService:
             binary = shutil.which(runtime)
             if binary:
                 return binary
-        raise CliServiceError(
-            "No container runtime found. Install docker, podman, or nerdctl."
-        )
+        raise CliServiceError("No container runtime found. Install docker, podman, or nerdctl.")
 
     def execute_local(
         self,
@@ -157,16 +186,16 @@ class CliService:
                 env=dict(env) if env else None,
             )
         except OSError as exc:
-            joined_command = " ".join(command)
+            sanitized_cmd = _sanitize_command(command)
             raise CliServiceError(
-                f"Failed to execute {backend} command '{joined_command}': {exc}"
+                f"Failed to execute {backend} command '{sanitized_cmd}': {exc}"
             ) from exc
 
         if result.returncode != 0:
-            joined_command = " ".join(command)
+            sanitized_cmd = _sanitize_command(command)
             stderr = result.stderr.strip() or result.stdout.strip()
             raise CliServiceError(
-                f"{backend.capitalize()} command failed ({joined_command}): {stderr}"
+                f"{backend.capitalize()} command failed ({sanitized_cmd}): {stderr}"
             )
 
         return {

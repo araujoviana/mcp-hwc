@@ -1,18 +1,20 @@
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
+
 import mcp_hwc.server as server
 from mcp_hwc.schemas.operations import ObsBucketSchema
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
+
 def obs_list_buckets() -> dict[str, object]:
     """List OBS buckets accessible to the configured credentials."""
     return server._run_tool_call(lambda: server.get_obs_service().list_buckets())
 
-def obs_create_bucket(
-    args: ObsBucketSchema
-) -> dict[str, object]:
+
+def obs_create_bucket(args: ObsBucketSchema) -> dict[str, object]:
     """Create an OBS bucket in the requested region code or alias like 'santiago'."""
     return server._run_tool_call(
         lambda: server.get_obs_service().create_bucket(
@@ -20,6 +22,7 @@ def obs_create_bucket(
             region=args.region,
         )
     )
+
 
 def obs_list_objects(
     bucket_name: str,
@@ -39,9 +42,11 @@ def obs_list_objects(
         )
     )
 
+
 def obs_get_bucket_location(bucket_name: str) -> dict[str, str | None]:
     """Get the region/location for an OBS bucket."""
     return server._run_tool_call(lambda: server.get_obs_service().get_bucket_location(bucket_name))
+
 
 def obs_head_bucket(
     bucket_name: str,
@@ -54,6 +59,7 @@ def obs_head_bucket(
             region=region,
         )
     )
+
 
 def obs_get_text_object(
     bucket_name: str,
@@ -71,6 +77,7 @@ def obs_get_text_object(
         )
     )
 
+
 def obs_head_object(
     bucket_name: str,
     object_key: str,
@@ -86,6 +93,7 @@ def obs_head_object(
             region=region,
         )
     )
+
 
 def obs_put_text_object(
     bucket_name: str,
@@ -103,6 +111,7 @@ def obs_put_text_object(
         )
     )
 
+
 def obs_upload_file(
     bucket_name: str,
     source_path: str,
@@ -118,6 +127,7 @@ def obs_upload_file(
             region=region,
         )
     )
+
 
 def obs_download_object(
     bucket_name: str,
@@ -135,6 +145,7 @@ def obs_download_object(
         )
     )
 
+
 def obs_delete_object(
     bucket_name: str,
     object_key: str,
@@ -151,6 +162,7 @@ def obs_delete_object(
         )
     )
 
+
 def obs_delete_bucket(
     bucket_name: str,
     region: str | None = None,
@@ -162,6 +174,7 @@ def obs_delete_bucket(
             region=region,
         )
     )
+
 
 def register_obs_tools(mcp: FastMCP):
     mcp.tool()(obs_list_buckets)

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import json
+import re
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
 from functools import lru_cache
 from importlib import import_module
-import re
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Literal, Sequence
 
 from huaweicloudsdkcore.auth.credentials import BasicCredentials, GlobalCredentials
 from huaweicloudsdkcore.exceptions import exceptions as sdk_exceptions
@@ -1770,7 +1771,7 @@ SERVICE_SPECS = {
         versions=_CBH_VERSIONS,
         aliases=("cloud_bastion_host",),
         provisioning_prerequisites=("vpc", "eip", "ecs"),
-        provisioning_notes="Manage bastion hosts, system settings, resources, users, permissions, and secure access workflows."
+        provisioning_notes="Manage bastion hosts, system settings, resources, users, permissions, and secure access workflows.",
     ),
     "codearts_artifact": ServiceSpec(
         name="codearts_artifact",
@@ -1861,7 +1862,7 @@ SERVICE_SPECS = {
         versions=_CODEHUB_VERSIONS,
         aliases=("code_hub",),
         provisioning_prerequisites=(),
-        provisioning_notes="Manage the older CodeHub repository surface when users target legacy CodeArts source-control workflows."
+        provisioning_notes="Manage the older CodeHub repository surface when users target legacy CodeArts source-control workflows.",
     ),
     "dds": ServiceSpec(
         name="dds",
@@ -2184,9 +2185,7 @@ class HuaweiCloudSdkService:
         operations = self._operations()
         if query:
             query_text = query.strip().lower()
-            operations = [
-                operation for operation in operations if query_text in operation.lower()
-            ]
+            operations = [operation for operation in operations if query_text in operation.lower()]
 
         page = operations[offset : offset + limit]
         return {
@@ -2218,6 +2217,7 @@ class HuaweiCloudSdkService:
         request_class = self._request_class(normalized_operation)
         schema = self._describe_type(request_class.__name__, max_depth, set())
         template = self._build_template(request_class.__name__, max_depth, set())
+        dense_sig = render_dense_type_schema(self, request_class.__name__, max_depth=max_depth)
 
         return {
             "service": self._spec.name,
@@ -2228,6 +2228,7 @@ class HuaweiCloudSdkService:
             "available_api_versions": list(self._spec.available_api_versions),
             "operation": normalized_operation,
             "request_model": request_class.__name__,
+            "dense_signature": dense_sig,
             "request_schema": schema,
             "request_template": template,
             "notes": (
@@ -2240,6 +2241,7 @@ class HuaweiCloudSdkService:
         self,
         operation: str,
         parameters: dict[str, object] | None = None,
+        fields: list[str] | None = None,
     ) -> dict[str, object]:
         normalized_operation = self._normalize_operation(operation)
         request_class = self._request_class(normalized_operation)
@@ -2256,6 +2258,10 @@ class HuaweiCloudSdkService:
         except sdk_exceptions.SdkException as exc:
             raise HuaweiCloudSdkError(str(exc)) from exc
 
+        sanitized_response = sanitize_for_serialization(response)
+        if fields:
+            sanitized_response = project_response_fields(sanitized_response, fields)
+
         return {
             "service": self._spec.name,
             "display_name": self._spec.display_name,
@@ -2267,7 +2273,7 @@ class HuaweiCloudSdkService:
             "credential_scope": self._spec.credential_scope,
             "region": self._config.region,
             "endpoint": self.endpoint,
-            "response": sanitize_for_serialization(response),
+            "response": sanitized_response,
         }
 
     def _get_client(self) -> Any:
@@ -2296,9 +2302,7 @@ class HuaweiCloudSdkService:
         if not candidate:
             raise ValueError("operation cannot be empty")
         if candidate not in self._operations():
-            raise ValueError(
-                f"Unsupported {self._spec.display_name} operation '{candidate}'"
-            )
+            raise ValueError(f"Unsupported {self._spec.display_name} operation '{candidate}'")
         return candidate
 
     def _describe_type(
@@ -2344,13 +2348,9 @@ class HuaweiCloudSdkService:
             fields.append(
                 {
                     "name": attribute_name,
-                    "api_name": model_class.attribute_map.get(
-                        attribute_name, attribute_name
-                    ),
+                    "api_name": model_class.attribute_map.get(attribute_name, attribute_name),
                     "type": attribute_type,
-                    "schema": self._describe_type(
-                        attribute_type, depth - 1, next_visited
-                    ),
+                    "schema": self._describe_type(attribute_type, depth - 1, next_visited),
                 }
             )
 
@@ -2391,9 +2391,7 @@ class HuaweiCloudSdkService:
 
         next_visited = visited | {type_name}
         return {
-            attribute_name: self._build_template(
-                attribute_type, depth - 1, next_visited
-            )
+            attribute_name: self._build_template(attribute_type, depth - 1, next_visited)
             for attribute_name, attribute_type in model_class.openapi_types.items()
         }
 
@@ -2414,10 +2412,7 @@ class HuaweiCloudSdkService:
                 raise ValueError(f"Expected an object for {expected_type}")
             if key_type != "str":
                 raise ValueError(f"Unsupported dict key type: {key_type}")
-            return {
-                str(key): self._coerce_value(value_type, item)
-                for key, item in value.items()
-            }
+            return {str(key): self._coerce_value(value_type, item) for key, item in value.items()}
 
         if expected_type in _PRIMITIVE_TYPES:
             return _coerce_primitive(expected_type, value)
@@ -2452,9 +2447,7 @@ class HuaweiCloudSdkService:
                 unknown_fields.append(key)
                 continue
 
-            kwargs[attribute_name] = self._coerce_value(
-                attribute_types[attribute_name], item
-            )
+            kwargs[attribute_name] = self._coerce_value(attribute_types[attribute_name], item)
 
         if unknown_fields:
             unknown_text = ", ".join(sorted(unknown_fields))
@@ -2546,7 +2539,9 @@ def summarize_service_capabilities(
 ) -> dict[str, object]:
     resolved_spec = resolve_service_spec(service_name, api_version)
     operations = _list_operations_for_spec(resolved_spec)
-    focus_terms = [term for term in _normalize_service_name(focus).split("_") if term] if focus else []
+    focus_terms = (
+        [term for term in _normalize_service_name(focus).split("_") if term] if focus else []
+    )
 
     category_operations: dict[str, list[str]] = {
         category: [] for category in _OPERATION_CATEGORY_PREFIXES
@@ -2573,9 +2568,7 @@ def summarize_service_capabilities(
         ]
 
     example_operations = {
-        category: ops[:10]
-        for category, ops in category_operations.items()
-        if ops
+        category: ops[:10] for category, ops in category_operations.items() if ops
     }
     if uncategorized_operations:
         example_operations["other"] = uncategorized_operations[:10]
@@ -2595,8 +2588,7 @@ def summarize_service_capabilities(
         | {"other": len(uncategorized_operations)},
         "example_operations": example_operations,
         "top_resource_tokens": [
-            {"token": token, "count": count}
-            for token, count in resource_counter.most_common(20)
+            {"token": token, "count": count} for token, count in resource_counter.most_common(20)
         ],
         "focus": focus,
         "focus_matches": focus_matches[:50],
@@ -2630,9 +2622,7 @@ def _categorize_operation(operation: str) -> str | None:
 def _extract_operation_resource_tokens(operation: str) -> list[str]:
     tokens = [token for token in operation.lower().split("_") if token]
     resource_tokens = [
-        token
-        for token in tokens
-        if token not in _OPERATION_TOKEN_STOPWORDS and len(token) > 2
+        token for token in tokens if token not in _OPERATION_TOKEN_STOPWORDS and len(token) > 2
     ]
     return resource_tokens
 
@@ -2752,3 +2742,133 @@ _SERVICE_ALIASES = {
     for spec in SERVICE_SPECS.values()
     for alias in (spec.name, spec.display_name, *spec.aliases)
 }
+
+
+def render_dense_type_schema(
+    service: HuaweiCloudSdkService,
+    type_name: str,
+    max_depth: int = 3,
+    visited: set[str] | None = None,
+    indent: int = 0,
+) -> str:
+    if visited is None:
+        visited = set()
+
+    list_item = _parse_list_type(type_name)
+    if list_item is not None:
+        inner = render_dense_type_schema(service, list_item, max_depth - 1, visited, indent)
+        return f"{inner}[]" if "\n" not in inner else f"Array<{inner}>"
+
+    dict_types = _parse_dict_types(type_name)
+    if dict_types is not None:
+        _, val_type = dict_types
+        inner = render_dense_type_schema(service, val_type, max_depth - 1, visited, indent)
+        return f"Record<string, {inner}>"
+
+    primitive_map = {
+        "str": "string",
+        "int": "number",
+        "float": "number",
+        "bool": "boolean",
+        "object": "any",
+        "datetime": "string /* ISO-8601 */",
+        "none_type": "null",
+        "NoneType": "null",
+    }
+    if type_name in primitive_map:
+        return primitive_map[type_name]
+
+    if max_depth <= 0 or type_name in visited:
+        return f"{type_name} /* ... */"
+
+    try:
+        model_class = service._model_class(type_name)
+    except (AttributeError, ModuleNotFoundError):
+        return type_name
+
+    next_visited = visited | {type_name}
+    lines = [f"interface {type_name} {{"] if indent == 0 else ["{"]
+    pad = "  " * (indent + 1)
+
+    for attr_name, attr_type in model_class.openapi_types.items():
+        api_name = model_class.attribute_map.get(attr_name, attr_name)
+        type_str = render_dense_type_schema(
+            service, attr_type, max_depth - 1, next_visited, indent + 1
+        )
+        display_name = attr_name if attr_name == api_name else f"{attr_name} /* api: {api_name} */"
+        lines.append(f"{pad}{display_name}?: {type_str};")
+
+    close_pad = "  " * indent
+    lines.append(f"{close_pad}}}")
+    return "\n".join(lines)
+
+
+def project_response_fields(data: Any, fields: Sequence[str] | None) -> Any:
+    if not fields or data is None:
+        return data
+
+    target_fields = {f.strip() for f in fields if f.strip()}
+    if not target_fields:
+        return data
+
+    if isinstance(data, dict):
+        result = {}
+        for k, v in data.items():
+            if k in target_fields:
+                result[k] = v
+            elif isinstance(v, list) and v and isinstance(v[0], dict):
+                result[k] = [
+                    {field: item[field] for field in target_fields if field in item} for item in v
+                ]
+            elif isinstance(v, dict):
+                sub = {field: v[field] for field in target_fields if field in v}
+                if sub:
+                    result[k] = sub
+        return result if result else {k: v for k, v in data.items() if k in target_fields}
+
+    if isinstance(data, list):
+        return [
+            {
+                field: item[field]
+                for field in target_fields
+                if isinstance(item, dict) and field in item
+            }
+            for item in data
+        ]
+
+    return data
+
+
+def format_list_as_markdown_table(
+    items: Sequence[dict[str, Any]],
+    columns: Sequence[str] | None = None,
+) -> str:
+    if not items:
+        return "*No records found.*"
+
+    dict_items = [item for item in items if isinstance(item, dict)]
+    if not dict_items:
+        return str(items)
+
+    if not columns:
+        cols = list(dict_items[0].keys())
+    else:
+        cols = list(columns)
+
+    header = "| " + " | ".join(cols) + " |"
+    separator = "| " + " | ".join(["---"] * len(cols)) + " |"
+    rows = []
+    for item in dict_items:
+        row_vals = []
+        for col in cols:
+            val = item.get(col, "")
+            if isinstance(val, (dict, list)):
+                val_str = json.dumps(val, ensure_ascii=False)
+                if len(val_str) > 30:
+                    val_str = val_str[:27] + "..."
+            else:
+                val_str = str(val).replace("\n", " ")
+            row_vals.append(val_str)
+        rows.append("| " + " | ".join(row_vals) + " |")
+
+    return "\n".join([header, separator] + rows)

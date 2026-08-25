@@ -35,14 +35,16 @@ class QuoteStore:
             services = list({item["service"] for item in data.get("items", [])})
             if service and service.lower() not in [s.lower() for s in services]:
                 continue
-            summaries.append({
-                "quote_id": data["quote_id"],
-                "services": services,
-                "total_monthly": data.get("total_monthly"),
-                "total_annual": data.get("total_annual"),
-                "currency": data.get("currency", "USD"),
-                "created_at": data.get("created_at"),
-            })
+            summaries.append(
+                {
+                    "quote_id": data["quote_id"],
+                    "services": services,
+                    "total_monthly": data.get("total_monthly"),
+                    "total_annual": data.get("total_annual"),
+                    "currency": data.get("currency", "USD"),
+                    "created_at": data.get("created_at"),
+                }
+            )
             if len(summaries) >= limit:
                 break
         return summaries
@@ -53,16 +55,18 @@ class QuoteStore:
 
         items = []
         for item_data in data.get("items", []):
-            items.append(QuoteItem(
-                service=item_data["service"],
-                spec=item_data["spec"],
-                region=item_data["region"],
-                period_type=item_data["period_type"],
-                period_num=item_data["period_num"],
-                quantity=item_data["quantity"],
-                unit_price=item_data["unit_price"],
-                currency=item_data["currency"],
-            ))
+            items.append(
+                QuoteItem(
+                    service=item_data["service"],
+                    spec=item_data["spec"],
+                    region=item_data["region"],
+                    period_type=item_data["period_type"],
+                    period_num=item_data["period_num"],
+                    quantity=item_data["quantity"],
+                    unit_price=item_data["unit_price"],
+                    currency=item_data["currency"],
+                )
+            )
         return QuoteResult(
             quote_id=uuid.UUID(data["quote_id"]),
             items=tuple(items),

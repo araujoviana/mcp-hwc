@@ -3,9 +3,9 @@ from __future__ import annotations
 import base64
 import io
 import json
-from pathlib import Path
 import tempfile
 import zipfile
+from pathlib import Path
 
 from mcp_hwc.cloud_services.cli_service import ContainerMount
 
@@ -34,9 +34,7 @@ def serialize_kubeconfig_document(response: dict[str, object]) -> str:
         "clusters": response.get("clusters") or [],
         "users": response.get("users") or [],
         "contexts": response.get("contexts") or [],
-        "current-context": response.get("current-context")
-        or response.get("current_context")
-        or "",
+        "current-context": response.get("current-context") or response.get("current_context") or "",
     }
     return json.dumps(kubeconfig, indent=2, ensure_ascii=True)
 

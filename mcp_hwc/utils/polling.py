@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 import time
+from typing import TYPE_CHECKING
 
 from mcp_hwc.core.errors import HelperToolError
 
@@ -51,20 +51,14 @@ def extract_path_value(payload: object, path: str) -> object:
     for segment in parse_path_segments(path):
         if isinstance(segment, int):
             if not isinstance(current, list):
-                raise HelperToolError(
-                    f"response_path segment [{segment}] requires a list value"
-                )
+                raise HelperToolError(f"response_path segment [{segment}] requires a list value")
             if segment >= len(current):
-                raise HelperToolError(
-                    f"response_path index [{segment}] is out of range"
-                )
+                raise HelperToolError(f"response_path index [{segment}] is out of range")
             current = current[segment]
             continue
 
         if not isinstance(current, dict):
-            raise HelperToolError(
-                f"response_path segment '{segment}' requires an object value"
-            )
+            raise HelperToolError(f"response_path segment '{segment}' requires an object value")
         if segment not in current:
             raise HelperToolError(f"response_path segment '{segment}' was not found")
         current = current[segment]

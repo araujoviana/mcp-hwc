@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import uuid
 from collections.abc import Callable
 from datetime import datetime, timezone
-import uuid
 
 from mcp_hwc.cloud_services.compute import (
     create_ecs_security_group,
@@ -15,8 +15,8 @@ from mcp_hwc.cloud_services.compute import (
     resolve_vpc_and_subnet,
 )
 from mcp_hwc.core.errors import HelperToolError
-from mcp_hwc.utils.polling import wait_for_service_value
 from mcp_hwc.core.sdk_service import HuaweiCloudSdkService
+from mcp_hwc.utils.polling import wait_for_service_value
 
 SdkServiceFactory = Callable[..., HuaweiCloudSdkService]
 
@@ -53,7 +53,9 @@ def create_ecs_vm(
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     resolved_name = name or f"mcp-ecs-{timestamp}"
     resolved_password = admin_password or generate_secret_password("McpEcs")
-    resolved_ssh_cidr = ssh_cidr if ssh_cidr is not None else ("0.0.0.0/0" if public_access else None)
+    resolved_ssh_cidr = (
+        ssh_cidr if ssh_cidr is not None else ("0.0.0.0/0" if public_access else None)
+    )
 
     vpc_service = service_factory("vpc", region=region)
     ims_service = service_factory("ims", region=region)

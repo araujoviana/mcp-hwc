@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path, PurePosixPath
 import posixpath
 import socket
+from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Protocol
 
 import paramiko
@@ -37,7 +37,9 @@ class _SshClient(Protocol):
 
     def connect(self, *args: Any, **kwargs: Any) -> None: ...
 
-    def exec_command(self, *args: Any, **kwargs: Any) -> tuple[Any, _ReadableStream, _ReadableStream]: ...
+    def exec_command(
+        self, *args: Any, **kwargs: Any
+    ) -> tuple[Any, _ReadableStream, _ReadableStream]: ...
 
     def open_sftp(self) -> _SftpClient: ...
 
@@ -215,9 +217,7 @@ class SshService:
         try:
             if not allow_unknown_host:
                 client.load_system_host_keys()
-            policy = (
-                paramiko.AutoAddPolicy() if allow_unknown_host else paramiko.RejectPolicy()
-            )
+            policy = paramiko.AutoAddPolicy() if allow_unknown_host else paramiko.RejectPolicy()
             client.set_missing_host_key_policy(policy)
             client.connect(
                 hostname=resolved_host,

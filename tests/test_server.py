@@ -1,17 +1,19 @@
 import base64
 import io
 import json
-from types import SimpleNamespace
 import zipfile
+from types import SimpleNamespace
 
-import os
 import pytest
 from mcp.server.fastmcp.exceptions import ToolError
+
 
 @pytest.fixture(autouse=True)
 def setup_env(monkeypatch):
     monkeypatch.setenv("HWC_AK", "fake-ak")
     monkeypatch.setenv("HWC_SK", "fake-sk")
+
+
 from mcp.shared.memory import create_connected_server_and_client_session
 
 from mcp_hwc import server
@@ -298,7 +300,12 @@ class FakeCliService:
         self.calls: list[tuple[str, object]] = []
 
     def resolve_backend(self, tool_name: str, *, backend: str = "auto", container_image=None):
-        self.calls.append(("resolve_backend", {"tool_name": tool_name, "backend": backend, "container_image": container_image}))
+        self.calls.append(
+            (
+                "resolve_backend",
+                {"tool_name": tool_name, "backend": backend, "container_image": container_image},
+            )
+        )
         return self.backend if backend == "auto" else backend
 
     def execute_local(self, tool_name: str, args, **kwargs) -> dict[str, object]:
@@ -311,8 +318,21 @@ class FakeCliService:
             "stderr": "",
         }
 
-    def execute_container(self, *, image: str, entrypoint: str, args, mounts=None, **kwargs) -> dict[str, object]:
-        self.calls.append(("execute_container", {"image": image, "entrypoint": entrypoint, "args": list(args), "mounts": mounts or [], **kwargs}))
+    def execute_container(
+        self, *, image: str, entrypoint: str, args, mounts=None, **kwargs
+    ) -> dict[str, object]:
+        self.calls.append(
+            (
+                "execute_container",
+                {
+                    "image": image,
+                    "entrypoint": entrypoint,
+                    "args": list(args),
+                    "mounts": mounts or [],
+                    **kwargs,
+                },
+            )
+        )
         return {
             "backend": "container",
             "command": [entrypoint, *args],
@@ -390,9 +410,7 @@ def test_defaults_tool_calls_helper(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_ecs_tool_function_calls_service(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        server, "get_ecs_service", lambda *args, **kwargs: FakeSdkService("ecs")
-    )
+    monkeypatch.setattr(server, "get_ecs_service", lambda *args, **kwargs: FakeSdkService("ecs"))
 
     result = server.ecs_call_operation(
         "create_servers",
@@ -483,7 +501,9 @@ def test_ecs_create_vm_uses_compact_workflow_without_polling(
     assert result["selected"]["vpc_id"] == "vpc-1"
     assert result["selected"]["image_id"] == "image-1"
     assert result["login"]["password_returned"] is False
-    assert ("ecs", "show_job") not in [(service_name, operation) for service_name, operation, _ in calls]
+    assert ("ecs", "show_job") not in [
+        (service_name, operation) for service_name, operation, _ in calls
+    ]
 
 
 def test_functiongraph_deploy_code_builds_zip_payload(
@@ -542,17 +562,13 @@ def test_lts_query_logs_resolves_names_and_filters(
             if operation == "list_log_groups":
                 return {
                     "response": {
-                        "log_groups": [
-                            {"log_group_id": "group-1", "log_group_name": "app-logs"}
-                        ]
+                        "log_groups": [{"log_group_id": "group-1", "log_group_name": "app-logs"}]
                     }
                 }
             if operation == "list_log_streams":
                 return {
                     "response": {
-                        "log_streams": [
-                            {"log_stream_id": "stream-1", "log_stream_name": "web"}
-                        ]
+                        "log_streams": [{"log_stream_id": "stream-1", "log_stream_name": "web"}]
                     }
                 }
             if operation == "list_logs":
@@ -608,9 +624,7 @@ def test_swr_upload_image_creates_repo_and_pushes(
             if operation == "create_authorization_token":
                 return {
                     "response": {
-                        "auths": {
-                            "swr.ap-southeast-1.myhuaweicloud.com": {"auth": auth_token}
-                        },
+                        "auths": {"swr.ap-southeast-1.myhuaweicloud.com": {"auth": auth_token}},
                         "x_swr_expireat": "2099-01-01T00:00:00Z",
                     }
                 }
@@ -625,7 +639,9 @@ def test_swr_upload_image_creates_repo_and_pushes(
         "_get_resolved_sdk_service",
         lambda *args, **kwargs: FakeSwrService(),
     )
-    monkeypatch.setattr(server.shutil, "which", lambda name: f"/usr/bin/{name}" if name == "docker" else None)
+    monkeypatch.setattr(
+        server.shutil, "which", lambda name: f"/usr/bin/{name}" if name == "docker" else None
+    )
     monkeypatch.setattr(server.subprocess, "run", fake_run)
 
     result = server.swr_upload_image(
@@ -716,7 +732,10 @@ def test_k8s_get_resources_uses_cli_runner(
     assert result["parsed_output"] == {"items": []}
     execute_call = next(call for call in fake_cli.calls if call[0] == "execute_container")
     assert "get" in execute_call[1]["args"]
-    assert any(getattr(mount, "target", "") == "/tmp/mcp-hwc-kubeconfig" for mount in execute_call[1]["mounts"])
+    assert any(
+        getattr(mount, "target", "") == "/tmp/mcp-hwc-kubeconfig"
+        for mount in execute_call[1]["mounts"]
+    )
 
 
 def test_helm_install_uses_values_and_repo(
@@ -767,9 +786,7 @@ def test_ecs_tool_infers_region_from_parameters(
 
 
 def test_vpc_tool_function_calls_service(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        server, "get_vpc_service", lambda *args, **kwargs: FakeSdkService("vpc")
-    )
+    monkeypatch.setattr(server, "get_vpc_service", lambda *args, **kwargs: FakeSdkService("vpc"))
 
     result = server.vpc_list_operations(query="list_vpc", limit=5)
 
@@ -958,7 +975,9 @@ def test_sfs_create_accessible_share_orchestrates_workflow(
                                     "id": "ac8.large.2",
                                     "vcpus": "2",
                                     "ram": 4096,
-                                    "os_extra_specs": {"cond:operation:az": "la-south-2a(normal),la-south-2b(normal)"},
+                                    "os_extra_specs": {
+                                        "cond:operation:az": "la-south-2a(normal),la-south-2b(normal)"
+                                    },
                                 }
                             ]
                         }
@@ -1078,9 +1097,7 @@ async def test_mcp_session_can_call_obs_tool(monkeypatch: pytest.MonkeyPatch) ->
 
 @pytest.mark.anyio
 async def test_mcp_session_can_call_generic_sdk_tool(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        server, "get_rds_service", lambda *args, **kwargs: FakeSdkService("rds")
-    )
+    monkeypatch.setattr(server, "get_rds_service", lambda *args, **kwargs: FakeSdkService("rds"))
 
     async with create_connected_server_and_client_session(
         server.mcp, raise_exceptions=True
@@ -1153,7 +1170,11 @@ async def test_mcp_session_can_call_ecs_create_vm(monkeypatch: pytest.MonkeyPatc
                         }
                     }
                 if operation == "create_servers":
-                    return {"service": "ecs", "region": "la-south-2", "response": {"job_id": "job-1"}}
+                    return {
+                        "service": "ecs",
+                        "region": "la-south-2",
+                        "response": {"job_id": "job-1"},
+                    }
             raise AssertionError((self.service_name, operation))
 
     monkeypatch.setattr(

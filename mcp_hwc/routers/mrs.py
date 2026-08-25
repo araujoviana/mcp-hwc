@@ -12,6 +12,7 @@ from mcp_hwc.workflows import mrs as mrs_workflow
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
+
 def mrs_list_clusters(
     region: str,
     state: str | None = None,
@@ -24,6 +25,7 @@ def mrs_list_clusters(
             state=state,
         )
     )
+
 
 def mrs_run_sql(
     cluster: str,
@@ -47,6 +49,7 @@ def mrs_run_sql(
             timeout_s=timeout_s,
         )
     )
+
 
 def mrs_submit_job(
     cluster: str,
@@ -73,6 +76,7 @@ def mrs_submit_job(
         )
     )
 
+
 def mrs_node_execute(
     cluster: str,
     command: str,
@@ -98,6 +102,7 @@ def mrs_node_execute(
             command_timeout=command_timeout,
         )
     )
+
 
 def mrs_component_cli(
     cluster: str,
@@ -126,6 +131,7 @@ def mrs_component_cli(
             command_timeout=command_timeout,
         )
     )
+
 
 def register_mrs_tools(mcp: FastMCP):
     mcp.tool()(mrs_list_clusters)

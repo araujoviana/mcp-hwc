@@ -1,11 +1,14 @@
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
+
 import mcp_hwc.server as server
 from mcp_hwc.cloud_services.cli_service import DEFAULT_TOOL_IMAGES, ContainerMount
 from mcp_hwc.schemas.operations import K8sApplySchema
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
+
 
 def cce_get_kubeconfig(
     cluster_id: str,
@@ -60,16 +63,14 @@ def cce_get_kubeconfig(
             "current_context": result["response"].get("current-context")
             or result["response"].get("current_context"),
             "expires_in_days": duration,
-            "port_id": result["response"].get("Port-ID")
-            or result["response"].get("port_id"),
+            "port_id": result["response"].get("Port-ID") or result["response"].get("port_id"),
             "written": True,
         }
 
     return server._run_tool_call(export_kubeconfig)
 
-def k8s_apply_manifest(
-    args: K8sApplySchema
-) -> dict[str, object]:
+
+def k8s_apply_manifest(args: K8sApplySchema) -> dict[str, object]:
     """Apply a Kubernetes manifest using kubectl."""
 
     def apply_manifest() -> dict[str, object]:
@@ -133,6 +134,7 @@ def k8s_apply_manifest(
 
     return server._run_tool_call(apply_manifest)
 
+
 def k8s_get_resources(
     kubeconfig_path: str,
     resource: str,
@@ -184,10 +186,13 @@ def k8s_get_resources(
             "namespace": namespace,
             "all_namespaces": all_namespaces,
             "output_format": output,
-            "parsed_output": server._parse_json_output(result["stdout"]) if output == "json" else None,
+            "parsed_output": server._parse_json_output(result["stdout"])
+            if output == "json"
+            else None,
         }
 
     return server._run_tool_call(get_resources)
+
 
 def k8s_wait(
     kubeconfig_path: str,
@@ -247,6 +252,7 @@ def k8s_wait(
 
     return server._run_tool_call(wait_for_resource)
 
+
 def k8s_logs(
     kubeconfig_path: str,
     resource: str,
@@ -305,6 +311,7 @@ def k8s_logs(
 
     return server._run_tool_call(get_logs)
 
+
 def k8s_exec(
     kubeconfig_path: str,
     pod: str,
@@ -356,6 +363,7 @@ def k8s_exec(
         }
 
     return server._run_tool_call(exec_in_pod)
+
 
 def helm_install(
     kubeconfig_path: str,
@@ -410,9 +418,7 @@ def helm_install(
             if values_path is not None:
                 if backend == "container":
                     mounted_values_path = "/tmp/mcp-hwc-helm-values.yaml"
-                    mounts.append(
-                        ContainerMount(values_path, mounted_values_path, read_only=True)
-                    )
+                    mounts.append(ContainerMount(values_path, mounted_values_path, read_only=True))
                     args.extend(["--values", mounted_values_path])
                 else:
                     args.extend(["--values", str(values_path)])
@@ -439,6 +445,7 @@ def helm_install(
                 values_path.unlink(missing_ok=True)
 
     return server._run_tool_call(install_chart)
+
 
 def helm_upgrade(
     kubeconfig_path: str,
@@ -493,9 +500,7 @@ def helm_upgrade(
             if values_path is not None:
                 if backend == "container":
                     mounted_values_path = "/tmp/mcp-hwc-helm-values.yaml"
-                    mounts.append(
-                        ContainerMount(values_path, mounted_values_path, read_only=True)
-                    )
+                    mounts.append(ContainerMount(values_path, mounted_values_path, read_only=True))
                     args.extend(["--values", mounted_values_path])
                 else:
                     args.extend(["--values", str(values_path)])
@@ -522,6 +527,7 @@ def helm_upgrade(
                 values_path.unlink(missing_ok=True)
 
     return server._run_tool_call(upgrade_chart)
+
 
 def helm_uninstall(
     kubeconfig_path: str,
@@ -573,6 +579,7 @@ def helm_uninstall(
         }
 
     return server._run_tool_call(uninstall_chart)
+
 
 def register_k8s_tools(mcp: FastMCP):
     mcp.tool()(cce_get_kubeconfig)

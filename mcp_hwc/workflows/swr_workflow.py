@@ -47,7 +47,9 @@ def resolve_container_cli(preferred_cli: str | None) -> str:
     raise HelperToolError("No container CLI found. Install docker, podman, or nerdctl.")
 
 
-def run_local_command(command: list[str], *, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
+def run_local_command(
+    command: list[str], *, input_text: str | None = None
+) -> subprocess.CompletedProcess[str]:
     try:
         result = subprocess.run(
             command,
@@ -152,9 +154,7 @@ def upload_swr_image(
             auth_entry = value
             break
     if not isinstance(auth_entry, dict):
-        raise HelperToolError(
-            f"SWR did not return credentials for registry '{registry_host}'"
-        )
+        raise HelperToolError(f"SWR did not return credentials for registry '{registry_host}'")
 
     encoded_auth = auth_entry.get("auth")
     if not isinstance(encoded_auth, str) or not encoded_auth:

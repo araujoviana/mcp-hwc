@@ -1,97 +1,179 @@
 from __future__ import annotations
 
-from functools import lru_cache
-import os
-import sys
 import argparse
-from pathlib import Path
+import os
 import shutil
 import subprocess
+import sys
 import time
 import uuid
+from functools import lru_cache
+from pathlib import Path
 from typing import Callable, TypeVar
 from urllib.parse import urlparse
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 
-from mcp_hwc.cloud_services.cli_service import DEFAULT_TOOL_IMAGES, CliService, CliServiceError, ContainerMount
-from mcp_hwc.core.config import CloudApiConfig, ConfigError, ObsConfig
+from mcp_hwc.cloud_services.cli_service import (
+    DEFAULT_TOOL_IMAGES,
+    CliService,
+    CliServiceError,
+    ContainerMount,
+)
 from mcp_hwc.cloud_services.compute import (
     create_ecs_security_group as _create_ecs_security_group,
+)
+from mcp_hwc.cloud_services.compute import (
     extract_first_string as _extract_first_string,
+)
+from mcp_hwc.cloud_services.compute import (
     extract_server_ips as _extract_server_ips,
+)
+from mcp_hwc.cloud_services.compute import (
     generate_secret_password as _generate_secret_password,
-    normal_azs_for_flavor as _normal_azs_for_flavor,
-    pick_access_image as _pick_access_image,
-    pick_access_vm_flavor as _pick_access_vm_flavor,
-    pick_default_subnet as _pick_default_subnet,
-    pick_default_vpc as _pick_default_vpc,
-    pick_sfs_availability_zone as _pick_sfs_availability_zone,
+)
+from mcp_hwc.cloud_services.compute import (
     list_compatible_ecs_flavors as _list_compatible_ecs_flavors,
+)
+from mcp_hwc.cloud_services.compute import (
+    normal_azs_for_flavor as _normal_azs_for_flavor,
+)
+from mcp_hwc.cloud_services.compute import (
+    pick_access_image as _pick_access_image,
+)
+from mcp_hwc.cloud_services.compute import (
+    pick_access_vm_flavor as _pick_access_vm_flavor,
+)
+from mcp_hwc.cloud_services.compute import (
+    pick_default_subnet as _pick_default_subnet,
+)
+from mcp_hwc.cloud_services.compute import (
+    pick_default_vpc as _pick_default_vpc,
+)
+from mcp_hwc.cloud_services.compute import (
+    pick_sfs_availability_zone as _pick_sfs_availability_zone,
+)
+from mcp_hwc.cloud_services.compute import (
     resolve_ecs_flavor as _resolve_ecs_flavor,
+)
+from mcp_hwc.cloud_services.compute import (
     resolve_ecs_image as _resolve_ecs_image,
+)
+from mcp_hwc.cloud_services.compute import (
     resolve_vpc_and_subnet as _resolve_vpc_and_subnet,
+)
+from mcp_hwc.cloud_services.compute import (
     select_named_resource as _select_named_resource,
 )
+from mcp_hwc.cloud_services.obs_service import ObsService, ObsServiceError
+from mcp_hwc.cloud_services.ssh_service import SshService, SshServiceError
+from mcp_hwc.core.config import CloudApiConfig, ConfigError, ObsConfig
 from mcp_hwc.core.defaults import resolve_service_defaults
 from mcp_hwc.core.errors import HelperToolError
-from mcp_hwc.utils.local_artifacts import (
-    format_cli_value as _format_cli_value,
-    package_functiongraph_source as _package_functiongraph_source,
-    parse_json_output as _parse_json_output,
-    parse_psql_rows as _parse_psql_rows,
-    prepare_chart_reference as _prepare_chart_reference,
-    prepare_helm_values_file as _prepare_helm_values_file,
-    prepare_kubeconfig_for_backend as _prepare_kubeconfig_for_backend,
-    resolve_existing_path as _resolve_existing_path,
-    resolve_output_path as _resolve_output_path,
-    serialize_kubeconfig_document as _serialize_kubeconfig_document,
-)
-from mcp_hwc.workflows.lts_workflow import (
-    filter_lts_logs as _filter_lts_logs,
-    normalize_time_ms as _normalize_time_ms,
-    query_lts_logs,
-    resolve_lts_log_group as _resolve_lts_log_group,
-    resolve_lts_log_stream as _resolve_lts_log_stream,
-)
-from mcp_hwc.cloud_services.obs_service import ObsService, ObsServiceError
-from mcp_hwc.utils.polling import (
-    DEFAULT_POLL_INTERVAL_SECONDS as _DEFAULT_POLL_INTERVAL_SECONDS,
-    MIN_POLL_INTERVAL_SECONDS as _MIN_POLL_INTERVAL_SECONDS,
-    extract_path_value as _extract_path_value,
-    resolve_poll_interval as _resolve_poll_interval,
-    sleep_before_next_poll as _sleep_before_next_poll,
-    wait_for_service_value as _wait_for_service_value,
-    wait_condition_matches as _wait_condition_matches,
-)
 from mcp_hwc.core.sdk_service import (
+    SERVICE_SPECS,
     HuaweiCloudSdkError,
     HuaweiCloudSdkService,
-    SERVICE_SPECS,
     list_supported_services,
     resolve_service_spec,
     summarize_service_capabilities,
 )
-from mcp_hwc.cloud_services.ssh_service import SshService, SshServiceError
-from mcp_hwc.workflows.swr_workflow import (
-    decode_swr_auth as _decode_swr_auth,
-    ensure_swr_namespace_and_repo as _ensure_swr_namespace_and_repo,
-    looks_like_existing_resource_error as _looks_like_existing_resource_error,
-    normalize_registry_host as _normalize_registry_host,
-    resolve_container_cli as _resolve_container_cli,
-    run_local_command as _run_local_command,
-    upload_swr_image,
-)
-from mcp_hwc.pricing.models import QuoteItem, QuoteResult, ResourceDescriptor
 from mcp_hwc.pricing.bss_pricing import BssAccessDenied, BssPricingBackend, PricingNotAvailable
 from mcp_hwc.pricing.catalog import resolve_region as _pricing_resolve_region
+from mcp_hwc.pricing.models import QuoteItem, QuoteResult, ResourceDescriptor
 from mcp_hwc.pricing.persistence import QuoteStore
 from mcp_hwc.pricing.tools import export_csv, export_json, export_terraform, format_text
-from mcp_hwc.workflows.ecs import create_ecs_vm as _create_ecs_vm_workflow
-from mcp_hwc.workflows.sfs import create_accessible_share as _create_accessible_sfs_share_workflow
-
 from mcp_hwc.schemas.operations import EcsCreateSchema, GenericCallSchema
+from mcp_hwc.utils.local_artifacts import (
+    format_cli_value as _format_cli_value,
+)
+from mcp_hwc.utils.local_artifacts import (
+    package_functiongraph_source as _package_functiongraph_source,
+)
+from mcp_hwc.utils.local_artifacts import (
+    parse_json_output as _parse_json_output,
+)
+from mcp_hwc.utils.local_artifacts import (
+    parse_psql_rows as _parse_psql_rows,
+)
+from mcp_hwc.utils.local_artifacts import (
+    prepare_chart_reference as _prepare_chart_reference,
+)
+from mcp_hwc.utils.local_artifacts import (
+    prepare_helm_values_file as _prepare_helm_values_file,
+)
+from mcp_hwc.utils.local_artifacts import (
+    prepare_kubeconfig_for_backend as _prepare_kubeconfig_for_backend,
+)
+from mcp_hwc.utils.local_artifacts import (
+    resolve_existing_path as _resolve_existing_path,
+)
+from mcp_hwc.utils.local_artifacts import (
+    resolve_output_path as _resolve_output_path,
+)
+from mcp_hwc.utils.local_artifacts import (
+    serialize_kubeconfig_document as _serialize_kubeconfig_document,
+)
+from mcp_hwc.utils.polling import (
+    DEFAULT_POLL_INTERVAL_SECONDS as _DEFAULT_POLL_INTERVAL_SECONDS,
+)
+from mcp_hwc.utils.polling import (
+    MIN_POLL_INTERVAL_SECONDS as _MIN_POLL_INTERVAL_SECONDS,
+)
+from mcp_hwc.utils.polling import (
+    extract_path_value as _extract_path_value,
+)
+from mcp_hwc.utils.polling import (
+    resolve_poll_interval as _resolve_poll_interval,
+)
+from mcp_hwc.utils.polling import (
+    sleep_before_next_poll as _sleep_before_next_poll,
+)
+from mcp_hwc.utils.polling import (
+    wait_condition_matches as _wait_condition_matches,
+)
+from mcp_hwc.utils.polling import (
+    wait_for_service_value as _wait_for_service_value,
+)
+from mcp_hwc.workflows.ecs import create_ecs_vm as _create_ecs_vm_workflow
+from mcp_hwc.workflows.lts_workflow import (
+    filter_lts_logs as _filter_lts_logs,
+)
+from mcp_hwc.workflows.lts_workflow import (
+    normalize_time_ms as _normalize_time_ms,
+)
+from mcp_hwc.workflows.lts_workflow import (
+    query_lts_logs,
+)
+from mcp_hwc.workflows.lts_workflow import (
+    resolve_lts_log_group as _resolve_lts_log_group,
+)
+from mcp_hwc.workflows.lts_workflow import (
+    resolve_lts_log_stream as _resolve_lts_log_stream,
+)
+from mcp_hwc.workflows.sfs import create_accessible_share as _create_accessible_sfs_share_workflow
+from mcp_hwc.workflows.swr_workflow import (
+    decode_swr_auth as _decode_swr_auth,
+)
+from mcp_hwc.workflows.swr_workflow import (
+    ensure_swr_namespace_and_repo as _ensure_swr_namespace_and_repo,
+)
+from mcp_hwc.workflows.swr_workflow import (
+    looks_like_existing_resource_error as _looks_like_existing_resource_error,
+)
+from mcp_hwc.workflows.swr_workflow import (
+    normalize_registry_host as _normalize_registry_host,
+)
+from mcp_hwc.workflows.swr_workflow import (
+    resolve_container_cli as _resolve_container_cli,
+)
+from mcp_hwc.workflows.swr_workflow import (
+    run_local_command as _run_local_command,
+)
+from mcp_hwc.workflows.swr_workflow import (
+    upload_swr_image,
+)
 
 T = TypeVar("T")
 
@@ -230,11 +312,7 @@ def _generated_service_tool_enabled(service_name: str) -> bool:
         return False
     if configured in {"*", "all"}:
         return True
-    enabled = {
-        item.strip().lower()
-        for item in configured.split(",")
-        if item.strip()
-    }
+    enabled = {item.strip().lower() for item in configured.split(",") if item.strip()}
     return service_name in enabled
 
 
@@ -375,50 +453,50 @@ def _execute_cli_tool(
 
 
 # Import router tools to expose them in the server module for testing
-from mcp_hwc.routers.obs import (
-    obs_list_buckets,
-    obs_create_bucket,
-    obs_list_objects,
-    obs_get_bucket_location,
-    obs_head_bucket,
-    obs_get_text_object,
-    obs_head_object,
-    obs_put_text_object,
-    obs_upload_file,
-    obs_download_object,
-    obs_delete_object,
-    obs_delete_bucket,
-    register_obs_tools,
-)
 from mcp_hwc.routers.k8s import (
     cce_get_kubeconfig,
-    k8s_apply_manifest,
-    k8s_get_resources,
-    k8s_wait,
-    k8s_logs,
-    k8s_exec,
     helm_install,
-    helm_upgrade,
     helm_uninstall,
+    helm_upgrade,
+    k8s_apply_manifest,
+    k8s_exec,
+    k8s_get_resources,
+    k8s_logs,
+    k8s_wait,
     register_k8s_tools,
+)
+from mcp_hwc.routers.mrs import (
+    mrs_component_cli,
+    mrs_list_clusters,
+    mrs_node_execute,
+    mrs_run_sql,
+    mrs_submit_job,
+    register_mrs_tools,
+)
+from mcp_hwc.routers.obs import (
+    obs_create_bucket,
+    obs_delete_bucket,
+    obs_delete_object,
+    obs_download_object,
+    obs_get_bucket_location,
+    obs_get_text_object,
+    obs_head_bucket,
+    obs_head_object,
+    obs_list_buckets,
+    obs_list_objects,
+    obs_put_text_object,
+    obs_upload_file,
+    register_obs_tools,
 )
 from mcp_hwc.routers.pricing import (
     _catalog_fallback_specs,
-    price_quote,
     price_discover,
     price_export,
-    price_list_quotes,
     price_get_quote,
+    price_list_quotes,
+    price_quote,
     price_share,
     register_pricing_tools,
-)
-from mcp_hwc.routers.mrs import (
-    mrs_list_clusters,
-    mrs_run_sql,
-    mrs_submit_job,
-    mrs_node_execute,
-    mrs_component_cli,
-    register_mrs_tools,
 )
 from mcp_hwc.routers.profiles import (
     hwc_list_profiles,
@@ -624,7 +702,9 @@ def huaweicloud_call_operation(
 
         return _wait_for_service_value(
             resolved_service,
-            operation="show_job" if "show_job" in resolved_service._operations() else "show_job_status",
+            operation="show_job"
+            if "show_job" in resolved_service._operations()
+            else "show_job_status",
             parameters={"job_id": job_id},
             response_path="response.status",
             expected_value="SUCCESS",
@@ -1236,22 +1316,20 @@ def _register_sdk_tools(service_name: str) -> None:
 for _service_name in SERVICE_SPECS:
     _register_sdk_tools(_service_name)
 
+
 def generate_config():
     python_path = sys.executable
-    config = {
-        "mcpServers": {
-            "huawei-cloud": {
-                "command": python_path,
-                "args": ["-m", "mcp_hwc"]
-            }
-        }
-    }
+    config = {"mcpServers": {"huawei-cloud": {"command": python_path, "args": ["-m", "mcp_hwc"]}}}
     import json
+
     print(json.dumps(config, indent=2))
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Huawei Cloud MCP Server")
-    parser.add_argument("--generate-config", action="store_true", help="Generate MCP client configuration")
+    parser.add_argument(
+        "--generate-config", action="store_true", help="Generate MCP client configuration"
+    )
     args, unknown = parser.parse_known_args()
 
     if args.generate_config:

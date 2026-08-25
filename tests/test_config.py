@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from mcp_hwc.core.config import CloudApiConfig, ConfigError, ObsConfig
 from mcp_hwc.cloud_services.obs_endpoints import OBS_GLOBAL_SERVER, build_obs_server
+from mcp_hwc.core.config import CloudApiConfig, ConfigError, ObsConfig
 
 
 @pytest.fixture(autouse=True)
@@ -38,9 +38,7 @@ def isolate_config_environment(
         monkeypatch.delenv(name, raising=False)
 
 
-def test_from_env_reads_dotenv_file(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_from_env_reads_dotenv_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     env_file = tmp_path / ".env"
     env_file.write_text(
         "\n".join(

@@ -222,7 +222,11 @@ def extract_server_ips(server: dict[str, object]) -> tuple[str | None, str | Non
 
 def extract_server_ids_from_response(response: "dict[str, object]") -> "list[str]":
     server_ids = response.get("server_ids") or response.get("serverIds") or []
-    if not server_ids and isinstance(response.get("server_id"), str) and response["server_id"].strip():
+    if (
+        not server_ids
+        and isinstance(response.get("server_id"), str)
+        and response["server_id"].strip()
+    ):
         server_ids = [response["server_id"]]
     return list(server_ids)
 
@@ -235,20 +239,25 @@ def find_server_after_create(
     """Look up a freshly-created ECS server by ID first, then by exact name as fallback."""
     if server_ids:
         try:
-            server_data = ecs_service.call_operation(
-                "show_server",
-                {"server_id": server_ids[0]},
-            )["response"].get("server") or {}
+            server_data = (
+                ecs_service.call_operation(
+                    "show_server",
+                    {"server_id": server_ids[0]},
+                )["response"].get("server")
+                or {}
+            )
             if server_data.get("id"):
                 return server_data
         except Exception:
             pass
 
     exact = [
-        s for s in ecs_service.call_operation(
+        s
+        for s in ecs_service.call_operation(
             "list_servers_details",
             {"name": name},
-        )["response"].get("servers") or []
+        )["response"].get("servers")
+        or []
         if s.get("name") == name
     ]
     return exact[0] if exact else None
@@ -267,16 +276,22 @@ def resolve_vpc_and_subnet(
 
     resolved_subnet_id = subnet_id
     if resolved_subnet_id is None:
-        subnets = vpc_service.call_operation(
-            "list_subnets",
-            {"limit": 100, "vpc_id": resolved_vpc_id},
-        )["response"].get("subnets") or []
+        subnets = (
+            vpc_service.call_operation(
+                "list_subnets",
+                {"limit": 100, "vpc_id": resolved_vpc_id},
+            )["response"].get("subnets")
+            or []
+        )
         resolved_subnet_id = pick_default_subnet(subnets)["id"]
 
-    subnet = vpc_service.call_operation(
-        "show_subnet",
-        {"subnet_id": resolved_subnet_id},
-    )["response"].get("subnet") or {}
+    subnet = (
+        vpc_service.call_operation(
+            "show_subnet",
+            {"subnet_id": resolved_subnet_id},
+        )["response"].get("subnet")
+        or {}
+    )
     return resolved_vpc_id, resolved_subnet_id, subnet
 
 
@@ -287,10 +302,13 @@ def create_ecs_security_group(
     vpc_id: str,
     ssh_cidr: str | None,
 ) -> str:
-    security_group = vpc_service.call_operation(
-        "create_security_group",
-        {"body": {"security_group": {"name": name, "vpc_id": vpc_id}}},
-    )["response"].get("security_group") or {}
+    security_group = (
+        vpc_service.call_operation(
+            "create_security_group",
+            {"body": {"security_group": {"name": name, "vpc_id": vpc_id}}},
+        )["response"].get("security_group")
+        or {}
+    )
     security_group_id = security_group.get("id")
     if not isinstance(security_group_id, str) or not security_group_id.strip():
         raise HelperToolError("Failed to create the ECS security group")
@@ -324,10 +342,13 @@ def resolve_ecs_image(
 ) -> dict[str, object]:
     if image_id:
         return {"id": image_id}
-    images = ims_service.call_operation(
-        "list_images",
-        {"limit": 100, "visibility": "public", "os_type": "Linux"},
-    )["response"].get("images") or []
+    images = (
+        ims_service.call_operation(
+            "list_images",
+            {"limit": 100, "visibility": "public", "os_type": "Linux"},
+        )["response"].get("images")
+        or []
+    )
     return pick_access_image(images, image_hint=image_hint)
 
 
@@ -342,7 +363,9 @@ def resolve_ecs_flavor(
         if availability_zone is None:
             raise ValueError("availability_zone is required when flavor_id is provided")
         return {"id": flavor_id}, availability_zone
-    flavors = ecs_service.call_operation("list_flavors", {"limit": 200})["response"].get("flavors") or []
+    flavors = (
+        ecs_service.call_operation("list_flavors", {"limit": 200})["response"].get("flavors") or []
+    )
     return pick_access_vm_flavor(
         flavors,
         preferred_az=availability_zone,

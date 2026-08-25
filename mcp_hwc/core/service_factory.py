@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-import os
 from functools import lru_cache
-from typing import Callable, TypeVar, TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, TypeVar
+
 from pydantic import ValidationError
 
-from mcp_hwc.core.config import CloudApiConfig, ObsConfig
+from mcp_hwc.cloud_services.cli_service import CliService
 from mcp_hwc.cloud_services.obs_service import ObsService
 from mcp_hwc.cloud_services.ssh_service import SshService
-from mcp_hwc.cloud_services.cli_service import CliService
+from mcp_hwc.core.config import CloudApiConfig, ObsConfig
+from mcp_hwc.core.sdk_service import HuaweiCloudSdkService, resolve_service_spec
 from mcp_hwc.pricing.bss_pricing import BssPricingBackend
 from mcp_hwc.pricing.persistence import QuoteStore
-from mcp_hwc.core.sdk_service import HuaweiCloudSdkService, resolve_service_spec
 
 if TYPE_CHECKING:
     from mcp_hwc.pricing.bss_pricing import BssPricingBackend
@@ -19,25 +19,31 @@ if TYPE_CHECKING:
 
 T = TypeVar("T")
 
+
 @lru_cache(maxsize=1)
 def get_obs_service() -> ObsService:
     return ObsService.from_config(ObsConfig.from_env())
+
 
 @lru_cache(maxsize=1)
 def get_ssh_service() -> SshService:
     return SshService()
 
+
 @lru_cache(maxsize=1)
 def get_cli_service() -> CliService:
     return CliService()
+
 
 @lru_cache(maxsize=1)
 def get_bss_pricing_backend() -> BssPricingBackend:
     return BssPricingBackend(CloudApiConfig.from_env("BSS"))
 
+
 @lru_cache(maxsize=1)
 def get_quote_store() -> QuoteStore:
     return QuoteStore()
+
 
 @lru_cache(maxsize=None)
 def get_sdk_service(
@@ -61,13 +67,15 @@ def get_sdk_service(
         api_version=resolved_spec.api_version,
     )
 
+
 def _run_tool_call(call: Callable[[], T]) -> T:
     from mcp.server.fastmcp.exceptions import ToolError
-    from mcp_hwc.core.errors import HelperToolError
+
+    from mcp_hwc.cloud_services.cli_service import CliServiceError
     from mcp_hwc.cloud_services.obs_service import ObsServiceError
     from mcp_hwc.cloud_services.ssh_service import SshServiceError
-    from mcp_hwc.cloud_services.cli_service import CliServiceError
     from mcp_hwc.core.config import ConfigError
+    from mcp_hwc.core.errors import HelperToolError
     from mcp_hwc.core.sdk_service import HuaweiCloudSdkError
     from mcp_hwc.pricing.bss_pricing import PricingNotAvailable
 
@@ -103,6 +111,7 @@ def _run_tool_call(call: Callable[[], T]) -> T:
                 "You can use `ecs_list_compatible_flavors` with `eni_required=True` to find one."
             )
         raise ToolError(msg) from exc
+
 
 def clear_caches() -> None:
     get_obs_service.cache_clear()

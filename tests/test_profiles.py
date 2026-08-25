@@ -10,9 +10,7 @@ def profile_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     import os
 
     (tmp_path / ".env").write_text("HWC_AK=AKDEFAULT123\nHWC_SK=skdefault\n")
-    (tmp_path / ".env.work").write_text(
-        "HWC_AK=AKWORK456\nHWC_SK=skwork\nHWC_REGION=sa-brazil-1\n"
-    )
+    (tmp_path / ".env.work").write_text("HWC_AK=AKWORK456\nHWC_SK=skwork\nHWC_REGION=sa-brazil-1\n")
     (tmp_path / ".env.example").write_text("HWC_AK=\nHWC_SK=\n")
     (tmp_path / ".env.bak").write_text("HWC_AK=old\n")
     monkeypatch.setenv("MCP_HWC_ENV_FILE", str(tmp_path / ".env"))

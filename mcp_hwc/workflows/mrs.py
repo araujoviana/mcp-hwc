@@ -150,10 +150,13 @@ def submit_job(
     deadline = time.monotonic() + timeout_s
     detail: dict[str, object] = {}
     while True:
-        detail = svc.call_operation(
-            "show_single_job_exe",
-            {"cluster_id": cluster_id, "job_execution_id": job_id},
-        )["response"].get("job_detail") or {}
+        detail = (
+            svc.call_operation(
+                "show_single_job_exe",
+                {"cluster_id": cluster_id, "job_execution_id": job_id},
+            )["response"].get("job_detail")
+            or {}
+        )
         if detail.get("job_state") in _TERMINAL_JOB_STATES:
             break
         if time.monotonic() > deadline:
@@ -246,9 +249,7 @@ def component_cli(
     entry_point = COMPONENT_CLIS.get(component.strip().lower())
     if entry_point is None:
         supported = ", ".join(sorted(COMPONENT_CLIS))
-        raise ValueError(
-            f"Unsupported component '{component}'. Supported components: {supported}"
-        )
+        raise ValueError(f"Unsupported component '{component}'. Supported components: {supported}")
 
     info = _resolve_cluster(service_factory, cluster, region=region)
     _require_normal_mode(info, f"{component} CLI access")
@@ -295,20 +296,13 @@ def _resolve_cluster(
     region: str,
 ) -> dict[str, object]:
     clusters = [_summarize_cluster(c) for c in _list_raw_clusters(service_factory, region=region)]
-    matches = [
-        c for c in clusters
-        if c["cluster_id"] == cluster or c["cluster_name"] == cluster
-    ]
+    matches = [c for c in clusters if c["cluster_id"] == cluster or c["cluster_name"] == cluster]
     if not matches:
-        known = ", ".join(
-            f"{c['cluster_name']} ({c['cluster_id']})" for c in clusters
-        ) or "none"
+        known = ", ".join(f"{c['cluster_name']} ({c['cluster_id']})" for c in clusters) or "none"
         raise ValueError(f"MRS cluster '{cluster}' not found. Known clusters: {known}")
     if len(matches) > 1:
         ids = ", ".join(str(c["cluster_id"]) for c in matches)
-        raise ValueError(
-            f"MRS cluster name '{cluster}' is ambiguous. Use one of the ids: {ids}"
-        )
+        raise ValueError(f"MRS cluster name '{cluster}' is ambiguous. Use one of the ids: {ids}")
     return matches[0]
 
 
