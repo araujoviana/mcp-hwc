@@ -1,5 +1,15 @@
 # Agent Notes
 
+## Versioning
+
+Every change to this project must bump `version` in `pyproject.toml`, following [Semantic Versioning](https://semver.org/) (`MAJOR.MINOR.PATCH`):
+
+- **MAJOR**: incompatible/breaking changes (e.g. removing or renaming a tool, changing a tool's required parameters).
+- **MINOR**: backwards-compatible new functionality (e.g. a new tool, a new optional parameter).
+- **PATCH**: backwards-compatible bug fixes and internal cleanup with no interface change.
+
+While the project is pre-1.0 (`0.x.y`), breaking changes are expected and bump MINOR instead of MAJOR, per SemVer's pre-1.0 convention.
+
 - Required environment variables: `HWC_AK` and `HWC_SK`.
 - Optional credential environment variable: `HWC_SECURITY_TOKEN` for temporary credentials.
 - Do not require users to set `HWC_REGION`, `HWC_PROJECT_ID`, `HWC_ECS_*`, `HWC_RDS_*`, or `HWC_OBS_*` in normal agent flows.

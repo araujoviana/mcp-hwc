@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import re
 from datetime import datetime, timedelta, timezone
+from typing import Any, Callable
 
 from mcp_hwc.cloud_services.compute import extract_first_string, select_named_resource
 from mcp_hwc.core.errors import HelperToolError
+from mcp_hwc.core.result_spooling import DEFAULT_SPOOL_ROW_THRESHOLD, spool_rows_if_large
 from mcp_hwc.core.sdk_service import HuaweiCloudSdkService
 
 
@@ -178,6 +180,10 @@ def query_lts_logs(
     original_content: bool = False,
     contains_text: str | None = None,
     regex: str | None = None,
+    obs_service_factory: Callable[[], Any] | None = None,
+    spool_bucket: str | None = None,
+    spool_region: str | None = None,
+    spool_threshold: int = DEFAULT_SPOOL_ROW_THRESHOLD,
 ) -> dict[str, object]:
     if not 1 <= limit <= 500:
         raise ValueError("limit must be between 1 and 500")
@@ -271,5 +277,15 @@ def query_lts_logs(
     }
     result["raw_count"] = len(raw_logs)
     result["matched_count"] = len(filtered_logs)
-    result["logs"] = filtered_logs
+    result.update(
+        spool_rows_if_large(
+            filtered_logs,
+            source="lts-logs",
+            data_key="logs",
+            bucket_name=spool_bucket,
+            region=spool_region,
+            obs_service_factory=obs_service_factory,
+            threshold=spool_threshold,
+        )
+    )
     return result

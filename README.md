@@ -8,6 +8,8 @@ It wraps 75+ Huawei Cloud SDKs and 3,000+ API operations, but the assistant only
 
 > **⚠️ This creates real, billable cloud resources.** Every VM, cluster, or bucket the assistant provisions costs money and keeps costing money until you tear it down. Review what a tool call is about to do before approving it, and don't run this in a fully auto-approve mode unless you genuinely don't care what gets created or what it costs.
 
+> **🚧 Early-phase project.** `mcp-hwc` is under active development and its interfaces can still change between versions. If you hit a bug, an incorrect tool result, or unexpected behavior, please [open an issue](https://github.com/araujoviana/mcp-hwc/issues) so it can get fixed.
+
 ## New to MCP?
 
 MCP (Model Context Protocol) is how AI assistants talk to external systems. An MCP server is a small program that runs on your machine and exposes "tools" (like `ecs_create_vm`) that the assistant can call on your behalf.

@@ -234,20 +234,25 @@ class FakeSdkService:
         self,
         operation: str,
         max_depth: int = 4,
+        dense_only: bool = True,
     ) -> dict[str, object]:
-        return {
+        result = {
             "service": self._service_name,
             "operation": operation,
             "request_model": "DemoRequest",
-            "request_schema": {"kind": "object", "model": "DemoRequest", "fields": []},
-            "request_template": {},
+            "dense_signature": "interface DemoRequest {}",
             "notes": "demo",
         }
+        if not dense_only:
+            result["request_schema"] = {"kind": "object", "model": "DemoRequest", "fields": []}
+            result["request_template"] = {}
+        return result
 
     def call_operation(
         self,
         operation: str,
         parameters: dict[str, object] | None = None,
+        fields: list[str] | None = None,
     ) -> dict[str, object]:
         return {
             "service": self._service_name,
@@ -345,7 +350,7 @@ class FakeCliService:
 def test_tool_function_calls_service(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(server, "get_obs_service", lambda: FakeObsService())
 
-    result = server.obs_list_objects("demo-bucket", prefix="docs/", max_keys=10)
+    result = server.obs_manage_object("list", "demo-bucket", prefix="docs/", max_keys=10)
 
     assert result["bucket"] == "demo-bucket"
     assert result["objects"][0]["key"] == "notes.txt"
@@ -358,7 +363,7 @@ def test_tool_errors_are_wrapped(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(server, "get_obs_service", lambda: failing_service)
 
     with pytest.raises(ToolError, match="boom"):
-        server.obs_list_buckets()
+        server.obs_manage_bucket("list")
 
 
 def test_capability_summary_tool_calls_helper(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -609,6 +614,59 @@ def test_lts_query_logs_resolves_names_and_filters(
     assert result["logs"][0]["content"] == "ERROR failed request"
 
 
+def test_lts_query_logs_spools_large_result_to_obs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeLtsService:
+        def call_operation(self, operation: str, parameters=None) -> dict[str, object]:
+            if operation == "list_log_groups":
+                return {"response": {"log_groups": [{"log_group_id": "group-1", "log_group_name": "app-logs"}]}}
+            if operation == "list_log_streams":
+                return {"response": {"log_streams": [{"log_stream_id": "stream-1", "log_stream_name": "web"}]}}
+            if operation == "list_logs":
+                return {
+                    "response": {
+                        "logs": [
+                            {"content": "line 1", "line_num": "1"},
+                            {"content": "line 2", "line_num": "2"},
+                            {"content": "line 3", "line_num": "3"},
+                        ]
+                    },
+                }
+            raise AssertionError(operation)
+
+    monkeypatch.setattr(
+        server,
+        "_get_resolved_sdk_service",
+        lambda *args, **kwargs: FakeLtsService(),
+    )
+
+    class FakeObsService:
+        def head_bucket(self, bucket_name, region=None):
+            return {"bucket": bucket_name}
+
+        def create_bucket(self, bucket_name, region=None):
+            return {"bucket": bucket_name}
+
+        def put_text_object(self, bucket_name, object_key, content, region=None):
+            return {"bucket": bucket_name, "key": object_key, "region": region}
+
+    monkeypatch.setattr(server, "get_obs_service", lambda: FakeObsService())
+
+    result = server.lts_query_logs(
+        log_group_name="app-logs",
+        log_stream_name="web",
+        region="ap-southeast-1",
+        spool_bucket="log-spool-bucket",
+        spool_threshold=1,
+    )
+
+    assert result["spooled"] is True
+    assert result["logs"] is None
+    assert result["total_rows"] == 3
+    assert result["obs_bucket"] == "log-spool-bucket"
+
+
 def test_swr_upload_image_creates_repo_and_pushes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -713,6 +771,63 @@ def test_cce_get_kubeconfig_writes_file(
     assert document["current-context"] == "external"
 
 
+def test_k8s_resource_apply_requires_exactly_one_manifest_source(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("{}", encoding="utf-8")
+    fake_cli = FakeCliService(backend="local", stdout="ok\n")
+    monkeypatch.setattr(server, "get_cli_service", lambda: fake_cli)
+
+    with pytest.raises(ToolError, match="Provide exactly one of manifest or manifest_path"):
+        server.k8s_resource(action="apply", kubeconfig_path=str(kubeconfig))
+
+    with pytest.raises(ToolError, match="Provide exactly one of manifest or manifest_path"):
+        server.k8s_resource(
+            action="apply",
+            kubeconfig_path=str(kubeconfig),
+            manifest="kind: Pod",
+            manifest_path="/tmp/manifest.yaml",
+        )
+
+    # Fails validation before touching the CLI backend at all.
+    assert fake_cli.calls == []
+
+
+def test_k8s_resource_get_requires_resource(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("{}", encoding="utf-8")
+    fake_cli = FakeCliService(backend="local", stdout="ok\n")
+    monkeypatch.setattr(server, "get_cli_service", lambda: fake_cli)
+
+    with pytest.raises(ToolError, match="resource is required"):
+        server.k8s_resource(action="get", kubeconfig_path=str(kubeconfig))
+
+    assert fake_cli.calls == []
+
+
+def test_helm_action_upgrade_and_uninstall_require_no_chart(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("{}", encoding="utf-8")
+    fake_cli = FakeCliService(backend="local", stdout="ok\n")
+    monkeypatch.setattr(server, "get_cli_service", lambda: fake_cli)
+
+    with pytest.raises(ToolError, match="chart is required"):
+        server.helm_action(action="upgrade", kubeconfig_path=str(kubeconfig), release_name="nginx")
+
+    result = server.helm_action(
+        action="uninstall", kubeconfig_path=str(kubeconfig), release_name="nginx"
+    )
+    assert result["uninstalled"] is True
+
+
 def test_k8s_get_resources_uses_cli_runner(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
@@ -722,7 +837,8 @@ def test_k8s_get_resources_uses_cli_runner(
     fake_cli = FakeCliService(backend="container", stdout='{"items": []}\n')
     monkeypatch.setattr(server, "get_cli_service", lambda: fake_cli)
 
-    result = server.k8s_get_resources(
+    result = server.k8s_resource(
+        action="get",
         kubeconfig_path=str(kubeconfig),
         resource="pods",
         output="json",
@@ -747,7 +863,8 @@ def test_helm_install_uses_values_and_repo(
     fake_cli = FakeCliService(backend="local", stdout="release installed\n")
     monkeypatch.setattr(server, "get_cli_service", lambda: fake_cli)
 
-    result = server.helm_install(
+    result = server.helm_action(
+        action="install",
         kubeconfig_path=str(kubeconfig),
         release_name="nginx",
         chart="ingress-nginx",
@@ -815,6 +932,54 @@ def test_generic_tool_resolves_service_alias(monkeypatch: pytest.MonkeyPatch) ->
     )
 
     assert result["service"] == "taurusdb"
+    assert result["response"]["ok"] is True
+
+
+def test_call_operation_forwards_fields_for_projection(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeFieldsService:
+        def call_operation(self, operation, parameters=None, fields=None):
+            captured["fields"] = fields
+            return {"service": "vpc", "response": {"vpcs": [{"id": "vpc-1", "name": "n", "cidr": "x"}]}}
+
+    monkeypatch.setattr(
+        server,
+        "_get_resolved_sdk_service",
+        lambda *args, **kwargs: FakeFieldsService(),
+    )
+
+    result = server.huaweicloud_call_operation(
+        service_name="vpc",
+        operation="list_vpcs",
+        fields=["id", "name"],
+    )
+
+    assert captured["fields"] == ["id", "name"]
+    assert result["response"]["vpcs"][0]["id"] == "vpc-1"
+
+
+def test_generated_call_operation_forwards_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeFieldsService:
+        def call_operation(self, operation, parameters=None, fields=None):
+            captured["fields"] = fields
+            return {"service": "taurusdb", "response": {"ok": True}}
+
+    monkeypatch.setattr(
+        server,
+        "get_taurusdb_service",
+        lambda *args, **kwargs: FakeFieldsService(),
+    )
+
+    result = server.taurusdb_call_operation(
+        operation="create_instance",
+        parameters={"body": {"name": "db-01"}},
+        fields=["id"],
+    )
+
+    assert captured["fields"] == ["id"]
     assert result["response"]["ok"] is True
 
 
@@ -1058,7 +1223,8 @@ def test_sfs_create_accessible_share_orchestrates_workflow(
 def test_obs_upload_file_calls_service(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(server, "get_obs_service", lambda: FakeObsService())
 
-    result = server.obs_upload_file(
+    result = server.obs_transfer(
+        action="upload_file",
         bucket_name="demo-bucket",
         source_path="./payload.bin",
         object_key="payload.bin",
@@ -1088,7 +1254,7 @@ async def test_mcp_session_can_call_obs_tool(monkeypatch: pytest.MonkeyPatch) ->
     async with create_connected_server_and_client_session(
         server.mcp, raise_exceptions=True
     ) as session:
-        result = await session.call_tool("obs_list_buckets", {})
+        result = await session.call_tool("obs_manage_bucket", {"action": "list"})
 
     assert result.isError is False
     assert result.structuredContent["bucket_count"] == 1

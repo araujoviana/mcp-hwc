@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from mcp.server.fastmcp.exceptions import ToolError
 
@@ -21,48 +21,135 @@ if TYPE_CHECKING:
 
 
 async def price_quote(
-    resources: list[dict[str, object]],
+    action: Literal["create", "get", "list", "export", "share"] = "create",
+    resources: list[dict[str, object]] | None = None,
     region: str | None = None,
+    quote_id: str | None = None,
+    format: str = "json",
+    limit: int = 20,
+    service: str | None = None,
 ) -> dict[str, object]:
-    """Get pricing/quotation for Huawei Cloud resources. Each resource dict needs: service, spec, region, period_type. Optional: period_num, quantity, size."""
+    """Create, retrieve, list, export, or share a Huawei Cloud pricing quote.
 
-    descs = []
-    for r in resources:
-        r_region = str(r.get("region", "") or region or "")
-        if not r_region:
-            raise ToolError("region is required (per-resource or top-level)")
+    action='create' (default): requires resources (list of dicts, each needing service, spec,
+    region, period_type; optional period_num, quantity, size).
+    action='get': requires quote_id. Retrieves a previously saved quote.
+    action='list': optional limit/service filter. Lists saved quotes.
+    action='export': requires quote_id; format is 'json' (default), 'csv', or 'terraform'.
+    action='share': requires quote_id. Returns a shareable calculator URL.
+    """
 
-        size = r.get("size")
-        if size is not None:
-            size = float(size)
+    if action == "create":
+        if not resources:
+            raise ToolError("resources is required for action='create'")
 
-        descs.append(
-            ResourceDescriptor(
-                service=str(r["service"]),
-                spec=str(r["spec"]),
-                region=r_region,
-                period_type=str(r["period_type"]),
-                period_num=int(r.get("period_num", 1)),
-                quantity=int(r.get("quantity", 1)),
-                size=size,
+        descs = []
+        for r in resources:
+            r_region = str(r.get("region", "") or region or "")
+            if not r_region:
+                raise ToolError("region is required (per-resource or top-level)")
+
+            size = r.get("size")
+            if size is not None:
+                size = float(size)
+
+            descs.append(
+                ResourceDescriptor(
+                    service=str(r["service"]),
+                    spec=str(r["spec"]),
+                    region=r_region,
+                    period_type=str(r["period_type"]),
+                    period_num=int(r.get("period_num", 1)),
+                    quantity=int(r.get("quantity", 1)),
+                    size=size,
+                )
             )
-        )
 
-    backend = get_bss_pricing_backend()
-    try:
-        result = await asyncio.to_thread(backend.quote, descs)
-    except BssAccessDenied as exc:
-        raise ToolError(f"BSS pricing API access denied (CBC.0156): {exc}") from exc
-    except PricingNotAvailable as exc:
-        raise ToolError(f"BSS pricing API unavailable: {exc}") from exc
-    except ValueError as exc:
-        raise ToolError(str(exc)) from exc
+        backend = get_bss_pricing_backend()
+        try:
+            result = await asyncio.to_thread(backend.quote, descs)
+        except BssAccessDenied as exc:
+            raise ToolError(f"BSS pricing API access denied (CBC.0156): {exc}") from exc
+        except PricingNotAvailable as exc:
+            raise ToolError(f"BSS pricing API unavailable: {exc}") from exc
+        except ValueError as exc:
+            raise ToolError(str(exc)) from exc
 
-    get_quote_store().save(result)
-    return {
-        "text": format_text(result),
-        **result.to_dict(),
-    }
+        get_quote_store().save(result)
+        return {
+            "text": format_text(result),
+            **result.to_dict(),
+        }
+
+    if action == "list":
+        def list_quotes() -> dict[str, object]:
+            store = get_quote_store()
+            return {"quotes": store.list_quotes(limit=limit, service=service)}
+
+        return _run_tool_call(list_quotes)
+
+    if not quote_id:
+        raise ToolError(f"quote_id is required for action='{action}'")
+
+    if action == "get":
+        def get_quote() -> dict[str, object]:
+            store = get_quote_store()
+            result = store.get(uuid.UUID(quote_id))
+            return {
+                "text": format_text(result),
+                **result.to_dict(),
+            }
+
+        return _run_tool_call(get_quote)
+
+    if action == "export":
+        def export() -> dict[str, object]:
+            store = get_quote_store()
+            result = store.get(uuid.UUID(quote_id))
+            if format == "csv":
+                content = export_csv(result)
+            elif format == "terraform":
+                content = export_terraform(result)
+            else:
+                content = export_json(result)
+            return {
+                "quote_id": quote_id,
+                "format": format,
+                "content": content,
+            }
+
+        return _run_tool_call(export)
+
+    if action == "share":
+        def share() -> dict[str, object]:
+            store = get_quote_store()
+            result = store.get(uuid.UUID(quote_id))
+            services = [item.service for item in result.items]
+            primary_service = services[0] if services else None
+
+            if primary_service and primary_service in CLOUD_SERVICE_TYPES:
+                calculator_url = (
+                    f"https://www.huaweicloud.com/intl/en-us/pricing/calculator.html#/{primary_service}"
+                )
+                method = "calculator_service_page"
+            else:
+                calculator_url = "https://www.huaweicloud.com/intl/en-us/pricing.html"
+                method = "calculator_landing_page"
+
+            return {
+                "quote_id": quote_id,
+                "share_url": calculator_url,
+                "method": method,
+                "services": services,
+                "note": (
+                    "The URL navigates to the calculator section for the primary service. "
+                    "Quote parameters must be re-entered in the calculator."
+                ),
+            }
+
+        return _run_tool_call(share)
+
+    raise ToolError(f"Unsupported action '{action}'")
 
 
 def _catalog_fallback_specs(
@@ -125,93 +212,6 @@ async def price_discover(
     }
 
 
-def price_share(quote_id: str) -> dict[str, object]:
-    """Generate a shareable URL for a quote on the HWC price calculator."""
-
-    def share() -> dict[str, object]:
-        store = get_quote_store()
-        result = store.get(uuid.UUID(quote_id))
-        services = [item.service for item in result.items]
-        primary_service = services[0] if services else None
-
-        if primary_service and primary_service in CLOUD_SERVICE_TYPES:
-            calculator_url = (
-                f"https://www.huaweicloud.com/intl/en-us/pricing/calculator.html#/{primary_service}"
-            )
-            method = "calculator_service_page"
-        else:
-            calculator_url = "https://www.huaweicloud.com/intl/en-us/pricing.html"
-            method = "calculator_landing_page"
-
-        return {
-            "quote_id": quote_id,
-            "share_url": calculator_url,
-            "method": method,
-            "services": services,
-            "note": (
-                "The URL navigates to the calculator section for the primary service. "
-                "Quote parameters must be re-entered in the calculator."
-            ),
-        }
-
-    return _run_tool_call(share)
-
-
-def price_export(
-    quote_id: str,
-    format: str = "json",
-) -> dict[str, object]:
-    """Export a saved quote in json, csv, or terraform format."""
-
-    def export() -> dict[str, object]:
-        store = get_quote_store()
-        result = store.get(uuid.UUID(quote_id))
-        if format == "csv":
-            content = export_csv(result)
-        elif format == "terraform":
-            content = export_terraform(result)
-        else:
-            content = export_json(result)
-        return {
-            "quote_id": quote_id,
-            "format": format,
-            "content": content,
-        }
-
-    return _run_tool_call(export)
-
-
-def price_list_quotes(
-    limit: int = 20,
-    service: str | None = None,
-) -> dict[str, object]:
-    """List saved pricing quotes."""
-
-    def list_quotes() -> dict[str, object]:
-        store = get_quote_store()
-        return {"quotes": store.list_quotes(limit=limit, service=service)}
-
-    return _run_tool_call(list_quotes)
-
-
-def price_get_quote(quote_id: str) -> dict[str, object]:
-    """Retrieve a specific saved quote by ID."""
-
-    def get_quote() -> dict[str, object]:
-        store = get_quote_store()
-        result = store.get(uuid.UUID(quote_id))
-        return {
-            "text": format_text(result),
-            **result.to_dict(),
-        }
-
-    return _run_tool_call(get_quote)
-
-
 def register_pricing_tools(mcp: FastMCP):
     mcp.tool()(price_quote)
     mcp.tool()(price_discover)
-    mcp.tool()(price_export)
-    mcp.tool()(price_list_quotes)
-    mcp.tool()(price_get_quote)
-    mcp.tool()(price_share)

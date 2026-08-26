@@ -88,14 +88,7 @@ def test_pricing_tools_registered_in_mcp() -> None:
     from mcp_hwc.server import mcp
 
     tool_names = {t.name for t in mcp._tool_manager.list_tools()}
-    expected = {
-        "price_quote",
-        "price_discover",
-        "price_export",
-        "price_list_quotes",
-        "price_get_quote",
-        "price_share",
-    }
+    expected = {"price_quote", "price_discover"}
     assert expected.issubset(tool_names), f"Missing tools: {expected - tool_names}"
 
 
@@ -121,8 +114,9 @@ def test_catalog_fallback_specs_filters_by_keyword() -> None:
     assert specs == []
 
 
-def test_price_share_uses_service_hash(monkeypatch: pytest.MonkeyPatch) -> None:
-    from mcp_hwc.server import price_share
+@pytest.mark.anyio
+async def test_price_share_uses_service_hash(monkeypatch: pytest.MonkeyPatch) -> None:
+    from mcp_hwc.server import price_quote
 
     store = QuoteStore()
     result = QuoteResult(
@@ -149,7 +143,7 @@ def test_price_share_uses_service_hash(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda: store,
     )
 
-    output = price_share(quote_id=str(result.quote_id))
+    output = await price_quote(action="share", quote_id=str(result.quote_id))
     assert "calculator.html" in output["share_url"]
     assert "/ecs" in output["share_url"]
     assert output["method"] == "calculator_service_page"

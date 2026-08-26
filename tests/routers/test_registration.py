@@ -12,9 +12,9 @@ async def test_obs_tools_registration():
     register_obs_tools(mcp)
     tools = await mcp.list_tools()
     tool_names = [t.name for t in tools]
-    assert "obs_list_buckets" in tool_names
-    assert "obs_create_bucket" in tool_names
-    assert "obs_upload_file" in tool_names
+    assert "obs_manage_bucket" in tool_names
+    assert "obs_manage_object" in tool_names
+    assert "obs_transfer" in tool_names
 
 
 @pytest.mark.anyio
@@ -24,8 +24,9 @@ async def test_k8s_tools_registration():
     tools = await mcp.list_tools()
     tool_names = [t.name for t in tools]
     assert "cce_get_kubeconfig" in tool_names
-    assert "k8s_apply_manifest" in tool_names
-    assert "helm_install" in tool_names
+    assert "k8s_resource" in tool_names
+    assert "k8s_exec_logs" in tool_names
+    assert "helm_action" in tool_names
 
 
 @pytest.mark.anyio

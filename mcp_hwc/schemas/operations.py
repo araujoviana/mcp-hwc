@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 
 class EcsCreateSchema(BaseModel):
@@ -92,45 +92,3 @@ class GenericCallSchema(BaseModel):
     )
 
 
-class ObsBucketSchema(BaseModel):
-    bucket_name: str = Field(
-        ..., description="The name of the OBS bucket. Must be globally unique."
-    )
-    region: Optional[str] = Field(
-        None, description="The Huawei Cloud region code where the bucket should reside."
-    )
-
-
-class K8sApplySchema(BaseModel):
-    kubeconfig_path: str = Field(
-        ..., description="Local path to the kubeconfig file used for authentication."
-    )
-    manifest: Optional[str] = Field(
-        None, description="Inline Kubernetes YAML manifest content to apply."
-    )
-    manifest_path: Optional[str] = Field(
-        None, description="Local path to a Kubernetes manifest file to apply."
-    )
-    namespace: Optional[str] = Field(
-        None, description="Kubernetes namespace to apply the manifest to."
-    )
-    context: Optional[str] = Field(None, description="Kubeconfig context name to use.")
-    validate_manifest: bool = Field(
-        True, description="Whether to validate the manifest before applying."
-    )
-    server_side: bool = Field(
-        False, description="Whether to use server-side apply (recommended for large manifests)."
-    )
-    execution_backend: str = Field(
-        "auto",
-        description="Execution backend: 'auto' (preferred), 'local' (requires kubectl installed), or 'container' (requires Docker/Podman).",
-    )
-    container_image: Optional[str] = Field(
-        None, description="Custom container image for kubectl if using 'container' backend."
-    )
-
-    @model_validator(mode="after")
-    def check_manifest_source(self) -> "K8sApplySchema":
-        if bool(self.manifest) == bool(self.manifest_path):
-            raise ValueError("Provide exactly one of 'manifest' or 'manifest_path'")
-        return self

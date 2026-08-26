@@ -204,6 +204,40 @@ def test_run_sql_returns_immediately_when_finished() -> None:
     assert v2.calls[0][1]["sql_type"] == "spark"
 
 
+def test_run_sql_spools_large_result_to_obs() -> None:
+    v1 = clusters_service([NORMAL_CLUSTER])
+    big_content = [[str(i)] for i in range(5)]
+    v2 = FakeSdkService({"execute_sql": {"id": "sql-3", "status": "FINISHED", "content": big_content}})
+    factory = make_factory({("mrs", "v1"): v1, ("mrs", "v2"): v2})
+
+    class FakeObsService:
+        def head_bucket(self, bucket_name, region=None):
+            return {"bucket": bucket_name}
+
+        def create_bucket(self, bucket_name, region=None):
+            return {"bucket": bucket_name}
+
+        def put_text_object(self, bucket_name, object_key, content, region=None):
+            return {"bucket": bucket_name, "key": object_key, "region": region}
+
+    result = mrs.run_sql(
+        service_factory=factory,
+        cluster="c-123",
+        sql="SELECT * FROM big_table",
+        engine="spark",
+        region="sa-brazil-1",
+        obs_service_factory=lambda: FakeObsService(),
+        spool_bucket="my-spool-bucket",
+        spool_threshold=2,
+    )
+
+    assert result["spooled"] is True
+    assert result["rows"] is None
+    assert result["total_rows"] == 5
+    assert result["obs_bucket"] == "my-spool-bucket"
+    assert "preview" in result
+
+
 def test_run_sql_failure_raises_with_message() -> None:
     v1 = clusters_service([NORMAL_CLUSTER])
     v2 = FakeSdkService(

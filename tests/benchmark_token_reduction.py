@@ -31,7 +31,7 @@ def run_comprehensive_token_benchmark() -> dict[str, object]:
 
     for svc_name, op_name, req_model in benchmark_ops:
         svc = HuaweiCloudSdkService(config, svc_name)
-        desc = svc.describe_operation(op_name)
+        desc = svc.describe_operation(op_name, dense_only=False)
 
         raw_ast_len = len(json.dumps(desc["request_schema"])) + len(
             json.dumps(desc["request_template"])

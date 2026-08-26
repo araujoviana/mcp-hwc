@@ -1,10 +1,12 @@
 import pytest
 from huaweicloudsdkcore.auth.credentials import GlobalCredentials
+from huaweicloudsdkcore.exceptions.exceptions import ClientRequestException, SdkError
 from huaweicloudsdkecs.v2.model.create_servers_response import CreateServersResponse
 from huaweicloudsdkrds.v3.model.create_instance_response import CreateInstanceResponse
 
 from mcp_hwc.core.config import CloudApiConfig
 from mcp_hwc.core.sdk_service import (
+    HuaweiCloudSdkError,
     HuaweiCloudSdkService,
     build_sdk_client,
     list_supported_services,
@@ -121,7 +123,7 @@ def test_list_operations_excludes_sdk_helper_methods() -> None:
 def test_describe_operation_returns_nested_schema() -> None:
     service = HuaweiCloudSdkService(make_config(), "rds")
 
-    result = service.describe_operation("create_instance", max_depth=3)
+    result = service.describe_operation("create_instance", max_depth=3, dense_only=False)
 
     assert result["request_model"] == "CreateInstanceRequest"
     fields = result["request_schema"]["fields"]
@@ -245,3 +247,45 @@ def test_call_operation_rejects_unknown_fields() -> None:
 
     with pytest.raises(ValueError, match="Unknown fields"):
         service.call_operation("list_cloud_servers", {"not_a_real_field": "value"})
+
+
+def test_call_operation_surfaces_policy_action_from_access_denied() -> None:
+    sdk_error = SdkError(
+        request_id="req-1",
+        error_code="APIGW.0301",
+        error_msg="No permission to access. Please grant ecs:servers:list to the caller.",
+    )
+
+    class FakeDeniedClient:
+        def list_servers_details(self, request):
+            raise ClientRequestException(403, sdk_error)
+
+    service = HuaweiCloudSdkService(
+        make_config(),
+        "ecs",
+        client_factory=lambda config, spec: FakeDeniedClient(),
+    )
+
+    with pytest.raises(HuaweiCloudSdkError, match="ecs:servers:list"):
+        service.call_operation("list_servers_details", {})
+
+
+def test_call_operation_access_denied_without_policy_action_falls_back() -> None:
+    sdk_error = SdkError(
+        request_id="req-2",
+        error_code="APIGW.0301",
+        error_msg="Access denied.",
+    )
+
+    class FakeDeniedClient:
+        def list_servers_details(self, request):
+            raise ClientRequestException(403, sdk_error)
+
+    service = HuaweiCloudSdkService(
+        make_config(),
+        "ecs",
+        client_factory=lambda config, spec: FakeDeniedClient(),
+    )
+
+    with pytest.raises(HuaweiCloudSdkError, match="did not include a specific"):
+        service.call_operation("list_servers_details", {})

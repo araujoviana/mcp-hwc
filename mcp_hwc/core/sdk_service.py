@@ -15,6 +15,7 @@ from huaweicloudsdkcore.region.region import Region
 from huaweicloudsdkcore.utils.http_utils import sanitize_for_serialization
 
 from mcp_hwc.core.config import CloudApiConfig
+from mcp_hwc.core.errors import build_access_denied_hint, is_access_denied
 
 _PRIMITIVE_TYPES = {"str", "int", "float", "bool", "object"}
 _PASSTHROUGH_TYPES = _PRIMITIVE_TYPES | {"none_type", "NoneType"}
@@ -2209,17 +2210,16 @@ class HuaweiCloudSdkService:
         self,
         operation: str,
         max_depth: int = 4,
+        dense_only: bool = True,
     ) -> dict[str, object]:
         if not 1 <= max_depth <= 8:
             raise ValueError("max_depth must be between 1 and 8")
 
         normalized_operation = self._normalize_operation(operation)
         request_class = self._request_class(normalized_operation)
-        schema = self._describe_type(request_class.__name__, max_depth, set())
-        template = self._build_template(request_class.__name__, max_depth, set())
         dense_sig = render_dense_type_schema(self, request_class.__name__, max_depth=max_depth)
 
-        return {
+        result = {
             "service": self._spec.name,
             "display_name": self._spec.display_name,
             "implementation": self._spec.implementation_name,
@@ -2229,13 +2229,17 @@ class HuaweiCloudSdkService:
             "operation": normalized_operation,
             "request_model": request_class.__name__,
             "dense_signature": dense_sig,
-            "request_schema": schema,
-            "request_template": template,
             "notes": (
                 "Use SDK attribute names for request fields. API header/query names are also accepted. "
                 "If the SDK exposes the operation in another API version, retry with `api_version`."
             ),
         }
+
+        if not dense_only:
+            result["request_schema"] = self._describe_type(request_class.__name__, max_depth, set())
+            result["request_template"] = self._build_template(request_class.__name__, max_depth, set())
+
+        return result
 
     def call_operation(
         self,
@@ -2254,6 +2258,14 @@ class HuaweiCloudSdkService:
         try:
             response = getattr(self._get_client(), normalized_operation)(request)
         except sdk_exceptions.ClientRequestException as exc:
+            if is_access_denied(exc.status_code, exc.error_code, exc.error_msg):
+                hint = build_access_denied_hint(
+                    service_display_name=self._spec.display_name,
+                    operation=normalized_operation,
+                    error_code=exc.error_code,
+                    error_msg=exc.error_msg,
+                )
+                raise HuaweiCloudSdkError(f"{exc} | {hint}") from exc
             raise HuaweiCloudSdkError(str(exc)) from exc
         except sdk_exceptions.SdkException as exc:
             raise HuaweiCloudSdkError(str(exc)) from exc

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING
 
+from mcp_hwc.core.result_spooling import DEFAULT_SPOOL_ROW_THRESHOLD
 from mcp_hwc.server import (
     _run_tool_call,
+    get_obs_service,
     get_sdk_service,
     get_ssh_service,
 )
@@ -35,8 +38,17 @@ def mrs_run_sql(
     database: str | None = None,
     wait: bool = True,
     timeout_s: int = 300,
+    spool_bucket: str | None = None,
+    spool_region: str | None = None,
+    spool_threshold: int = DEFAULT_SPOOL_ROW_THRESHOLD,
 ) -> dict[str, object]:
-    """Run a SQL statement on an MRS cluster via the MRS SQL API (no SSH needed). engine: hive, spark, or presto. cluster accepts a name or id. Returns result rows for queries that finish in time."""
+    """Run a SQL statement on an MRS cluster via the MRS SQL API (no SSH needed). engine: hive, spark, or presto. cluster accepts a name or id. Returns result rows for queries that finish in time.
+
+    If the result has more than spool_threshold rows (default 50), the full result is uploaded to
+    OBS as JSON and a 10-row Markdown preview is returned instead. Pass spool_bucket (or set the
+    MCP_HWC_SPOOL_BUCKET env var) to enable this for large results."""
+    resolved_bucket = spool_bucket or os.environ.get("MCP_HWC_SPOOL_BUCKET")
+    resolved_spool_region = spool_region or os.environ.get("MCP_HWC_SPOOL_REGION")
     return _run_tool_call(
         lambda: mrs_workflow.run_sql(
             service_factory=get_sdk_service,
@@ -47,6 +59,10 @@ def mrs_run_sql(
             database=database,
             wait=wait,
             timeout_s=timeout_s,
+            obs_service_factory=get_obs_service,
+            spool_bucket=resolved_bucket,
+            spool_region=resolved_spool_region,
+            spool_threshold=spool_threshold,
         )
     )
 

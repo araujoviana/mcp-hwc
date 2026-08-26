@@ -71,6 +71,7 @@ from mcp_hwc.cloud_services.ssh_service import SshService, SshServiceError
 from mcp_hwc.core.config import CloudApiConfig, ConfigError, ObsConfig
 from mcp_hwc.core.defaults import resolve_service_defaults
 from mcp_hwc.core.errors import HelperToolError
+from mcp_hwc.core.result_spooling import DEFAULT_SPOOL_ROW_THRESHOLD
 from mcp_hwc.core.sdk_service import (
     SERVICE_SPECS,
     HuaweiCloudSdkError,
@@ -455,14 +456,9 @@ def _execute_cli_tool(
 # Import router tools to expose them in the server module for testing
 from mcp_hwc.routers.k8s import (
     cce_get_kubeconfig,
-    helm_install,
-    helm_uninstall,
-    helm_upgrade,
-    k8s_apply_manifest,
-    k8s_exec,
-    k8s_get_resources,
-    k8s_logs,
-    k8s_wait,
+    helm_action,
+    k8s_exec_logs,
+    k8s_resource,
     register_k8s_tools,
 )
 from mcp_hwc.routers.mrs import (
@@ -474,28 +470,15 @@ from mcp_hwc.routers.mrs import (
     register_mrs_tools,
 )
 from mcp_hwc.routers.obs import (
-    obs_create_bucket,
-    obs_delete_bucket,
-    obs_delete_object,
-    obs_download_object,
-    obs_get_bucket_location,
-    obs_get_text_object,
-    obs_head_bucket,
-    obs_head_object,
-    obs_list_buckets,
-    obs_list_objects,
-    obs_put_text_object,
-    obs_upload_file,
+    obs_manage_bucket,
+    obs_manage_object,
+    obs_transfer,
     register_obs_tools,
 )
 from mcp_hwc.routers.pricing import (
     _catalog_fallback_specs,
     price_discover,
-    price_export,
-    price_get_quote,
-    price_list_quotes,
     price_quote,
-    price_share,
     register_pricing_tools,
 )
 from mcp_hwc.routers.profiles import (
@@ -649,8 +632,13 @@ def huaweicloud_describe_operation(
     operation: str,
     api_version: str | None = None,
     max_depth: int = 4,
+    dense_only: bool = True,
 ) -> dict[str, object]:
-    """Describe the request schema for any supported Huawei Cloud service operation."""
+    """Describe the request schema for any supported Huawei Cloud service operation.
+
+    By default only returns the compact `dense_signature` TypeScript interface. Set
+    `dense_only=False` to also include the raw nested `request_schema` AST and
+    `request_template` (useful for debugging or programmatic consumption)."""
     return _run_tool_call(
         lambda: _get_resolved_sdk_service(
             service_name,
@@ -658,6 +646,7 @@ def huaweicloud_describe_operation(
         ).describe_operation(
             operation=operation,
             max_depth=max_depth,
+            dense_only=dense_only,
         )
     )
 
@@ -674,8 +663,12 @@ def huaweicloud_call_operation(
     api_version: str | None = None,
     wait_for_completion: bool = False,
     timeout_seconds: int = 1200,
+    fields: list[str] | None = None,
 ) -> dict[str, object]:
-    """Execute any supported Huawei Cloud SDK operation using a service name or alias."""
+    """Execute any supported Huawei Cloud SDK operation using a service name or alias.
+
+    Pass `fields` (e.g. ["id", "name", "status"]) to project the response down to just
+    those keys, cutting response size for large list/show operations."""
 
     def call_and_maybe_wait() -> dict[str, object]:
         resolved_service = _get_resolved_sdk_service(
@@ -689,6 +682,7 @@ def huaweicloud_call_operation(
         result = resolved_service.call_operation(
             operation=operation,
             parameters=parameters,
+            fields=fields,
         )
 
         if not wait_for_completion:
@@ -1069,8 +1063,17 @@ def lts_query_logs(
     project_id: str | None = None,
     endpoint: str | None = None,
     api_version: str | None = None,
+    spool_bucket: str | None = None,
+    spool_region: str | None = None,
+    spool_threshold: int = DEFAULT_SPOOL_ROW_THRESHOLD,
 ) -> dict[str, object]:
-    """Resolve LTS log groups or streams by name and query filtered logs. Requires log_group_id or log_group_name; call list_log_groups first if you only have the cluster or resource name."""
+    """Resolve LTS log groups or streams by name and query filtered logs. Requires log_group_id or log_group_name; call list_log_groups first if you only have the cluster or resource name.
+
+    If the result has more than spool_threshold rows (default 50), the full result is uploaded to
+    OBS as JSON and a 10-row Markdown preview is returned instead. Pass spool_bucket (or set the
+    MCP_HWC_SPOOL_BUCKET env var) to enable this for large results."""
+    resolved_bucket = spool_bucket or os.environ.get("MCP_HWC_SPOOL_BUCKET")
+    resolved_spool_region = spool_region or os.environ.get("MCP_HWC_SPOOL_REGION")
     return _run_tool_call(
         lambda: query_lts_logs(
             _get_resolved_sdk_service(
@@ -1097,6 +1100,10 @@ def lts_query_logs(
             original_content=original_content,
             contains_text=contains_text,
             regex=regex,
+            obs_service_factory=get_obs_service,
+            spool_bucket=resolved_bucket,
+            spool_region=resolved_spool_region,
+            spool_threshold=spool_threshold,
         )
     )
 
@@ -1261,12 +1268,14 @@ def _register_sdk_tools(service_name: str) -> None:
         operation: str,
         api_version: str | None = None,
         max_depth: int = 4,
+        dense_only: bool = True,
     ) -> dict[str, object]:
         getter = globals()[getter_name]
         return _run_tool_call(
             lambda: getter(api_version=api_version).describe_operation(
                 operation=operation,
                 max_depth=max_depth,
+                dense_only=dense_only,
             )
         )
 
@@ -1286,6 +1295,7 @@ def _register_sdk_tools(service_name: str) -> None:
         domain_id: str | None = None,
         endpoint: str | None = None,
         api_version: str | None = None,
+        fields: list[str] | None = None,
     ) -> dict[str, object]:
         getter = globals()[getter_name]
         return _run_tool_call(
@@ -1298,6 +1308,7 @@ def _register_sdk_tools(service_name: str) -> None:
             ).call_operation(
                 operation=operation,
                 parameters=parameters,
+                fields=fields,
             )
         )
 

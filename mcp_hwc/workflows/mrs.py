@@ -4,6 +4,8 @@ import os
 import time
 from collections.abc import Callable
 
+from mcp_hwc.core.result_spooling import DEFAULT_SPOOL_ROW_THRESHOLD, spool_rows_if_large
+
 SdkServiceFactory = Callable[..., object]
 
 CLIENT_ENV_COMMAND = "source /opt/Bigdata/client/bigdata_env 2>/dev/null || true"
@@ -52,6 +54,10 @@ def run_sql(
     wait: bool = True,
     timeout_s: int = 300,
     poll_interval_s: float = 5.0,
+    obs_service_factory: Callable[[], object] | None = None,
+    spool_bucket: str | None = None,
+    spool_region: str | None = None,
+    spool_threshold: int = DEFAULT_SPOOL_ROW_THRESHOLD,
 ) -> dict[str, object]:
     if engine not in _SQL_ENGINES:
         supported = ", ".join(sorted(_SQL_ENGINES))
@@ -95,13 +101,22 @@ def run_sql(
             f"SQL execution {status.lower()} on cluster '{info['cluster_name']}': "
             f"{result.get('message') or 'no error message returned'}"
         )
+    rows_payload = spool_rows_if_large(
+        result.get("content") or [],
+        source="mrs-sql",
+        data_key="rows",
+        bucket_name=spool_bucket,
+        region=spool_region,
+        obs_service_factory=obs_service_factory,
+        threshold=spool_threshold,
+    )
     return {
         "cluster_id": cluster_id,
         "sql_id": result.get("id"),
         "status": status,
-        "rows": result.get("content") or [],
         "result_location": result.get("result_location"),
         "message": result.get("message"),
+        **rows_payload,
     }
 
 

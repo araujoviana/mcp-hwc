@@ -34,7 +34,7 @@ def _sanitize_command(command: Sequence[str]) -> str:
             sanitized.append(token_str)
             key, _, _ = command[i + 1].partition("=")
             sanitized.append(f"{key}=***")
-            skip_next = False
+            skip_next = True
         else:
             sanitized.append(token_str)
     return " ".join(sanitized)

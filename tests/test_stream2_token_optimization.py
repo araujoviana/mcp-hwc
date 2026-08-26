@@ -27,7 +27,7 @@ def test_dense_schema_drastically_reduces_token_size() -> None:
     service = HuaweiCloudSdkService(make_config(), "ecs")
 
     # 1. Old/verbose schema description
-    raw_desc = service.describe_operation("create_servers")
+    raw_desc = service.describe_operation("create_servers", dense_only=False)
     raw_schema_json = json.dumps(raw_desc["request_schema"])
     raw_template_json = json.dumps(raw_desc["request_template"])
     raw_total_len = len(raw_schema_json) + len(raw_template_json)
