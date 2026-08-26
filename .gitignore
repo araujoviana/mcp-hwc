@@ -9,3 +9,13 @@ reference/
 .worktrees/
 .ruff_cache/
 
+# kept locally only, intentionally excluded from published history
+docs/api-gap-analysis.md
+docs/code-review-2026-06-20.md
+docs/token-optimization-architecture.md
+docs/multi-cloud-benchmark.md
+docs/security-hardening.md
+docs/superpowers/
+.agents/
+opencode.json
+uv.lock
