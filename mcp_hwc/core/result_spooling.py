@@ -36,21 +36,31 @@ def spool_rows_if_large(
     if total <= threshold:
         return {data_key: list(rows), "total_rows": total, "spooled": False}
 
-    if not bucket_name:
-        raise ValueError(
-            f"{source} returned {total} rows (> {threshold}); pass a spool bucket "
-            f"(spool_bucket param, or set MCP_HWC_SPOOL_BUCKET) to store the full "
-            f"result in OBS."
-        )
-    if obs_service_factory is None:
-        raise ValueError(f"{source} spooling requires an OBS service factory, none was provided")
+    if not bucket_name or obs_service_factory is None:
+        # No spool target configured: return the full result as before rather than
+        # failing the query, but tell the caller how to opt into offloading.
+        return {
+            data_key: list(rows),
+            "total_rows": total,
+            "spooled": False,
+            "spool_hint": (
+                f"{source} returned {total} rows (> {threshold}). Pass spool_bucket "
+                f"(or set MCP_HWC_SPOOL_BUCKET) to offload large results to OBS and "
+                f"get a compact preview instead of the full payload."
+            ),
+        }
 
     obs = obs_service_factory()
     if auto_create_bucket:
         try:
             obs.head_bucket(bucket_name=bucket_name, region=region)
         except Exception:
-            obs.create_bucket(bucket_name=bucket_name, region=region)
+            try:
+                obs.create_bucket(bucket_name=bucket_name, region=region)
+            except Exception:
+                # The bucket may already exist (owned elsewhere, or a transient
+                # head failure); let the upload below surface the real error.
+                pass
 
     key = object_key or _default_object_key(source)
     body = json.dumps(list(rows), ensure_ascii=False, default=str)

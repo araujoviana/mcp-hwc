@@ -14,17 +14,46 @@ _POLICY_ACTION_PATTERN = re.compile(r"\b[a-z][a-zA-Z0-9]*:[A-Za-z][\w]*:[A-Za-z]
 
 _IAM_CONSOLE_URL = "https://console.huaweicloud.com/iam/#/iam/users"
 
+# Phrases that reliably indicate an IAM / fine-grained-permission denial. Plain
+# "forbidden" is deliberately NOT here: Huawei Cloud uses it for many non-IAM
+# errors ("You are forbidden to use market image ...", "operation forbidden in
+# the current state", ...), and misclassifying those sends the agent off to
+# debug IAM policies for a problem that has nothing to do with permissions.
+_ACCESS_DENIED_PHRASES = (
+    "access denied",
+    "accessdenied",
+    "not authorized",
+    "unauthorized",
+    "no permission",
+    "have no permission",
+    "permission denied",
+    "denied by policy",
+    "does not have permission",
+    "insufficient permission",
+    "policy doesn't allow",
+    "policy does not allow",
+)
+
+# Words that must co-occur with a "{a}:{b}:{c}" token before we present it as a
+# policy action to grant — keeps incidental colon-delimited identifiers in error
+# text from being surfaced as fabricated permission names.
+_POLICY_CONTEXT_PATTERN = re.compile(r"(?i)permission|policy|grant|authoriz|denied")
+
 
 def is_access_denied(
     status_code: int | None,
     error_code: str | None,
     error_msg: str | None,
 ) -> bool:
-    """Best-effort detection of an IAM/permission-denied SDK response."""
+    """Best-effort detection of an IAM/permission-denied SDK response.
+
+    A 403 status is authoritative. Otherwise we only match on specific
+    permission phrasing (see ``_ACCESS_DENIED_PHRASES``).
+    """
     if status_code == 403:
         return True
     haystack = f"{error_code or ''} {error_msg or ''}".casefold()
-    return any(t in haystack for t in ("access denied", "forbidden", "no permission", "not authorized"))
+    return any(phrase in haystack for phrase in _ACCESS_DENIED_PHRASES)
 
 
 def build_access_denied_hint(
@@ -37,8 +66,9 @@ def build_access_denied_hint(
     """Surface an IAM policy action embedded in the SDK's own error text when present;
     otherwise point at the failing service/operation and the IAM console. Does not
     fabricate a permission name that the SDK did not report."""
-    match = _POLICY_ACTION_PATTERN.search(f"{error_code or ''} {error_msg or ''}")
-    if match:
+    text = f"{error_code or ''} {error_msg or ''}"
+    match = _POLICY_ACTION_PATTERN.search(text)
+    if match and _POLICY_CONTEXT_PATTERN.search(text):
         return (
             f"Huawei Cloud IAM denied this request. Grant policy action "
             f"'{match.group(0)}' to the caller's IAM policy/agency, then retry."

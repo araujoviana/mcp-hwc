@@ -28,32 +28,39 @@ def test_small_result_returned_unchanged() -> None:
     assert calls == []
 
 
-def test_large_result_without_bucket_raises() -> None:
+def test_large_result_without_bucket_returns_full_result_with_hint() -> None:
     rows = [{"id": i} for i in range(60)]
 
-    with pytest.raises(ValueError, match="spool bucket"):
-        spool_rows_if_large(
-            rows,
-            source="test",
-            bucket_name=None,
-            region=None,
-            obs_service_factory=lambda: None,
-            threshold=50,
-        )
+    result = spool_rows_if_large(
+        rows,
+        source="test",
+        bucket_name=None,
+        region=None,
+        obs_service_factory=lambda: None,
+        threshold=50,
+    )
+
+    assert result["rows"] == rows
+    assert result["spooled"] is False
+    assert result["total_rows"] == 60
+    assert "spool_bucket" in result["spool_hint"]
 
 
-def test_large_result_without_factory_raises() -> None:
+def test_large_result_without_factory_returns_full_result_with_hint() -> None:
     rows = [{"id": i} for i in range(60)]
 
-    with pytest.raises(ValueError, match="OBS service factory"):
-        spool_rows_if_large(
-            rows,
-            source="test",
-            bucket_name="my-bucket",
-            region=None,
-            obs_service_factory=None,
-            threshold=50,
-        )
+    result = spool_rows_if_large(
+        rows,
+        source="test",
+        bucket_name="my-bucket",
+        region=None,
+        obs_service_factory=None,
+        threshold=50,
+    )
+
+    assert result["rows"] == rows
+    assert result["spooled"] is False
+    assert "spool_hint" in result
 
 
 def test_large_result_spools_to_obs_and_returns_preview() -> None:
@@ -121,3 +128,29 @@ def test_large_result_reuses_existing_bucket() -> None:
     )
 
     assert create_calls == []
+
+
+def test_create_bucket_failure_does_not_mask_upload() -> None:
+    rows = [{"id": i} for i in range(60)]
+
+    class FakeObsService:
+        def head_bucket(self, bucket_name, region=None):
+            raise RuntimeError("head failed (transient)")
+
+        def create_bucket(self, bucket_name, region=None):
+            raise RuntimeError("bucket already exists and is owned by another account")
+
+        def put_text_object(self, bucket_name, object_key, content, region=None):
+            return {"bucket": bucket_name, "key": object_key, "region": "sa-brazil-1"}
+
+    result = spool_rows_if_large(
+        rows,
+        source="test",
+        bucket_name="shared-bucket",
+        region=None,
+        obs_service_factory=lambda: FakeObsService(),
+        threshold=50,
+    )
+
+    assert result["spooled"] is True
+    assert result["obs_bucket"] == "shared-bucket"

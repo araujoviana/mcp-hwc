@@ -21,6 +21,10 @@ _PRIMITIVE_TYPES = {"str", "int", "float", "bool", "object"}
 _PASSTHROUGH_TYPES = _PRIMITIVE_TYPES | {"none_type", "NoneType"}
 _SERVICE_KEY_PATTERN = re.compile(r"[^a-z0-9]+")
 
+# Depth at which the compact `dense_signature` is always rendered (the hard
+# ceiling accepted by `describe_operation`'s `max_depth`).
+_DENSE_SCHEMA_MAX_DEPTH = 8
+
 CredentialScope = Literal["basic", "global"]
 
 _OPERATION_CATEGORY_PREFIXES = {
@@ -1720,7 +1724,12 @@ SERVICE_SPECS = {
         versions=_WAF_VERSIONS,
         aliases=("web_application_firewall",),
         provisioning_prerequisites=("elb", "eip", "cdn"),
-        provisioning_notes="Manage protected domains, policies, custom rules, anti-bot controls, certificates, and traffic-protection settings.",
+        provisioning_notes=(
+            "Manage protected domains, policies, custom rules, anti-bot controls, certificates, "
+            "and traffic-protection settings. Domain listing is split by WAF mode: `list_host` "
+            "returns only cloud-mode domains, `list_premium_host` only dedicated-instance domains. "
+            "Use `list_composite_hosts` to see every protected domain regardless of mode."
+        ),
     ),
     "aad": ServiceSpec(
         name="aad",
@@ -2217,7 +2226,23 @@ class HuaweiCloudSdkService:
 
         normalized_operation = self._normalize_operation(operation)
         request_class = self._request_class(normalized_operation)
-        dense_sig = render_dense_type_schema(self, request_class.__name__, max_depth=max_depth)
+        # The dense signature is the default (and often only) view returned. It is
+        # ~linear in size (one line per field), unlike the verbose AST, so a
+        # shallow `max_depth` would only force the caller to re-request. Always
+        # render it at the maximum depth; `max_depth` still bounds the AST below.
+        dense_sig = render_dense_type_schema(
+            self, request_class.__name__, max_depth=_DENSE_SCHEMA_MAX_DEPTH
+        )
+
+        notes = (
+            "Use SDK attribute names for request fields. API header/query names are also accepted. "
+            "If the SDK exposes the operation in another API version, retry with `api_version`."
+        )
+        if "/* ... */" in dense_sig:
+            notes += (
+                " Types shown as `Name /* ... */` are recursive or very deeply nested; "
+                "pass `dense_only=False` for the fully expanded `request_schema`."
+            )
 
         result = {
             "service": self._spec.name,
@@ -2228,11 +2253,9 @@ class HuaweiCloudSdkService:
             "available_api_versions": list(self._spec.available_api_versions),
             "operation": normalized_operation,
             "request_model": request_class.__name__,
+            "service_notes": self._spec.provisioning_notes,
             "dense_signature": dense_sig,
-            "notes": (
-                "Use SDK attribute names for request fields. API header/query names are also accepted. "
-                "If the SDK exposes the operation in another API version, retry with `api_version`."
-            ),
+            "notes": notes,
         }
 
         if not dense_only:
@@ -2463,7 +2486,18 @@ class HuaweiCloudSdkService:
 
         if unknown_fields:
             unknown_text = ", ".join(sorted(unknown_fields))
-            raise ValueError(f"Unknown fields for {expected_type}: {unknown_text}")
+            accepted = sorted({*attribute_types.keys(), *model_class.attribute_map.values()})
+            message = (
+                f"Unknown fields for {expected_type}: {unknown_text}. "
+                f"Accepted fields: {', '.join(accepted)}."
+            )
+            if set(attribute_types) == {"body"}:
+                message += (
+                    " This operation wraps its payload in a top-level 'body' object; "
+                    "nest your parameters under 'body' (see `dense_signature` from "
+                    "`describe_operation`)."
+                )
+            raise ValueError(message)
 
         return model_class(**kwargs)
 
@@ -2860,6 +2894,22 @@ def format_list_as_markdown_table(
 
     dict_items = [item for item in items if isinstance(item, dict)]
     if not dict_items:
+        seq_items = [list(item) for item in items if isinstance(item, (list, tuple))]
+        if seq_items:
+            width = max(len(row) for row in seq_items)
+            cols = list(columns) if columns else [f"col{i + 1}" for i in range(width)]
+            header = "| " + " | ".join(cols) + " |"
+            separator = "| " + " | ".join(["---"] * len(cols)) + " |"
+            body = [
+                "| "
+                + " | ".join(
+                    str(row[i]).replace("\n", " ") if i < len(row) else ""
+                    for i in range(len(cols))
+                )
+                + " |"
+                for row in seq_items
+            ]
+            return "\n".join([header, separator] + body)
         return str(items)
 
     if not columns:

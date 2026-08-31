@@ -249,6 +249,32 @@ def test_call_operation_rejects_unknown_fields() -> None:
         service.call_operation("list_cloud_servers", {"not_a_real_field": "value"})
 
 
+def test_unknown_fields_error_lists_accepted_fields_and_body_wrapper() -> None:
+    service = HuaweiCloudSdkService(make_config(), "vpc")
+
+    with pytest.raises(ValueError) as exc_info:
+        service.call_operation(
+            "create_security_group_rule",
+            {"security_group_rule": {"security_group_id": "sg-1", "direction": "ingress"}},
+        )
+
+    message = str(exc_info.value)
+    assert "Accepted fields: body" in message
+    assert "wraps its payload in a top-level 'body' object" in message
+
+
+def test_describe_operation_dense_signature_expands_nested_body() -> None:
+    service = HuaweiCloudSdkService(make_config(), "ecs")
+
+    # Shallow max_depth must not leave the request body truncated in the default
+    # (dense-only) view.
+    result = service.describe_operation("create_servers", max_depth=2)
+
+    assert "/* ... */" not in result["dense_signature"]
+    assert "flavor_ref" in result["dense_signature"]
+    assert result["service_notes"]
+
+
 def test_call_operation_surfaces_policy_action_from_access_denied() -> None:
     sdk_error = SdkError(
         request_id="req-1",

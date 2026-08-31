@@ -151,3 +151,13 @@ def test_markdown_table_formatter_produces_compact_tabular_output() -> None:
         f"\n[Token Optimization Proof 3] Raw indented JSON chars: {raw_json_len}, Markdown Table chars: {table_len}, Reduction: {reduction_pct:.2f}%"
     )
     assert reduction_pct > 35.0
+
+
+def test_markdown_table_formatter_handles_row_arrays() -> None:
+    # MRS SQL results come back as positional row arrays, not dicts.
+    rows = [["1", "alice", "2024-01-01"], ["2", "bob", "2024-01-02"]]
+    table_str = format_list_as_markdown_table(rows)
+
+    assert "| col1 | col2 | col3 |" in table_str
+    assert "| 1 | alice | 2024-01-01 |" in table_str
+    assert "| 2 | bob | 2024-01-02 |" in table_str

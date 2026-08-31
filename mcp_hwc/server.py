@@ -636,9 +636,10 @@ def huaweicloud_describe_operation(
 ) -> dict[str, object]:
     """Describe the request schema for any supported Huawei Cloud service operation.
 
-    By default only returns the compact `dense_signature` TypeScript interface. Set
-    `dense_only=False` to also include the raw nested `request_schema` AST and
-    `request_template` (useful for debugging or programmatic consumption)."""
+    By default returns only the compact `dense_signature` TypeScript interface (fully
+    expanded regardless of `max_depth`). Set `dense_only=False` to also include the raw
+    nested `request_schema` AST and `request_template`, whose size `max_depth` bounds
+    (useful for debugging or programmatic consumption)."""
     return _run_tool_call(
         lambda: _get_resolved_sdk_service(
             service_name,

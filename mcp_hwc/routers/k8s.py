@@ -399,6 +399,8 @@ def helm_action(
                 args.append("--create-namespace")
             if action == "upgrade" and install_if_missing:
                 args.append("--install")
+                if create_namespace:
+                    args.append("--create-namespace")
             if namespace:
                 args.extend(["--namespace", namespace])
             if repo:

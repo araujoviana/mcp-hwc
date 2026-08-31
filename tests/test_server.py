@@ -883,6 +883,32 @@ def test_helm_install_uses_values_and_repo(
     assert any(item.startswith("controller.service.type=LoadBalancer") for item in args)
 
 
+def test_helm_action_upgrade_install_creates_namespace(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("{}", encoding="utf-8")
+    fake_cli = FakeCliService(backend="local", stdout="release upgraded\n")
+    monkeypatch.setattr(server, "get_cli_service", lambda: fake_cli)
+
+    server.helm_action(
+        action="upgrade",
+        kubeconfig_path=str(kubeconfig),
+        release_name="nginx",
+        chart="ingress-nginx",
+        namespace="ingress-nginx",
+        install_if_missing=True,
+        create_namespace=True,
+    )
+
+    execute_call = next(call for call in fake_cli.calls if call[0] == "execute_local")
+    args = execute_call[1]["args"]
+    assert "upgrade" in args
+    assert "--install" in args
+    assert "--create-namespace" in args
+
+
 def test_ecs_tool_infers_region_from_parameters(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
