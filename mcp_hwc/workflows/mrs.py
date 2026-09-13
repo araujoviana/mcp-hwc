@@ -70,14 +70,19 @@ def run_sql(
     cluster_id = info["cluster_id"]
 
     svc = service_factory("mrs", api_version="v2", region=region)
-    payload: dict[str, object] = {
-        "cluster_id": cluster_id,
+    body_payload: dict[str, object] = {
         "sql_type": engine,
         "sql_content": sql,
     }
     if database:
-        payload["database"] = database
-    submitted = svc.call_operation("execute_sql", payload)["response"]
+        body_payload["database"] = database
+    submitted = svc.call_operation(
+        "execute_sql",
+        {
+            "cluster_id": cluster_id,
+            "body": body_payload,
+        },
+    )["response"]
 
     result = submitted
     if wait:
@@ -142,15 +147,20 @@ def submit_job(
     cluster_id = info["cluster_id"]
 
     svc = service_factory("mrs", api_version="v2", region=region)
-    payload: dict[str, object] = {
-        "cluster_id": cluster_id,
+    body_payload: dict[str, object] = {
         "job_type": job_type,
         "job_name": job_name or f"mcp-hwc-{job_type.lower()}-{int(time.time())}",
         "arguments": arguments or [],
     }
     if properties:
-        payload["properties"] = properties
-    response = svc.call_operation("create_execute_job", payload)["response"]
+        body_payload["properties"] = properties
+    response = svc.call_operation(
+        "create_execute_job",
+        {
+            "cluster_id": cluster_id,
+            "body": body_payload,
+        },
+    )["response"]
     submit_result = response.get("job_submit_result") or response
     job_id = submit_result.get("job_id")
 
@@ -182,7 +192,7 @@ def submit_job(
         if poll_interval_s > 0:
             time.sleep(poll_interval_s)
 
-    if detail.get("job_state") in {"FAILED", "KILLED"}:
+    if detail.get("job_state") in {"FAILED", "KILLED"} or detail.get("job_result") in {"FAILED", "KILLED"}:
         raise ValueError(
             f"Job {job_id} ended in state {detail.get('job_state')} "
             f"(result: {detail.get('job_result')}). Check tracking_url or Yarn logs."

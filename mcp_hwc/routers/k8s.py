@@ -79,7 +79,7 @@ def k8s_resource(
     all_namespaces: bool = False,
     selector: str | None = None,
     field_selector: str | None = None,
-    output: str = "yaml",
+    output: str = "",
     validate_manifest: bool = True,
     server_side: bool = False,
     for_condition: str = "condition=Available",
@@ -161,7 +161,9 @@ def k8s_resource(
             }
 
         if action == "get":
-            args = [*kubeconfig_args, "get", resource, "-o", output]
+            args = [*kubeconfig_args, "get", resource]
+            if output:
+                args.extend(["-o", output])
             if all_namespaces:
                 args.append("--all-namespaces")
             elif namespace:
@@ -178,17 +180,19 @@ def k8s_resource(
                 container_image=resolved_image,
                 mounts=mounts,
             )
-            return {
+            parsed = server._parse_json_output(result["stdout"]) if output == "json" else None
+            response_data = {
                 **result,
                 "resource_type": "kubernetes",
                 "resource": resource,
                 "namespace": namespace,
                 "all_namespaces": all_namespaces,
-                "output_format": output,
-                "parsed_output": server._parse_json_output(result["stdout"])
-                if output == "json"
-                else None,
+                "output_format": output or "table",
+                "parsed_output": parsed,
             }
+            if output == "json" and parsed is not None:
+                response_data.pop("stdout", None)
+            return response_data
 
         if action == "wait":
             args = [

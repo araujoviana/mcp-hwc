@@ -191,34 +191,18 @@ _MCP_INSTRUCTIONS = (
     "That includes VPCs, subnets, security groups, routes, images, node pools, "
     "public access, load balancers, storage, backups, and KMS resources when the "
     "requested service depends on them.\n\n"
-    "Prefer direct workflow tools over raw SDK calls. For ECS virtual machines, use "
-    "`ecs_create_vm` first; it resolves the usual VPC, subnet, image, flavor, security "
-    "group, and create payload from minimal input. Use raw SDK tools only for uncommon "
-    "operations or when a workflow helper cannot express the request.\n\n"
-    "When a service exposes an SSH endpoint, use `ssh_execute`, `ssh_upload_file`, "
-    "and `ssh_download_file` to finish post-provisioning tasks such as package "
-    "installation or configuration management. Use OBS file-transfer tools for "
-    "binary uploads and downloads. Use `swr_upload_image` to push local container "
-    "images to SWR, `functiongraph_deploy_code` to zip and upload local function "
-    "source, `cce_get_kubeconfig` to export cluster access config, `k8s_*` tools "
-    "for kubectl-style operations, `helm_*` tools for chart management, and "
-    "`lts_query_logs` to resolve LTS groups or streams and filter logs. Do not poll "
-    "after creates by default; prefer returning provider job IDs or resource IDs and "
-    "only use `huaweicloud_wait_for_condition` when the next step requires the final "
-    "state. When polling is required, use sparse intervals of at least 60 seconds, "
-    "and `postgres_execute_sql` when you need to validate PostgreSQL connectivity "
-    "from the MCP host.\n\n"
-    "The default MCP catalog intentionally hides generated per-service SDK tools to "
-    f"save model context. Set `{_GENERATED_SERVICE_TOOL_ENV}=all` or a comma-separated "
-    "service allowlist to expose them. Generic `huaweicloud_*` SDK tools remain available.\n\n"
-    "Use `huaweicloud_list_services` to discover supported services, aliases, and "
-    "API versions. Use `huaweicloud_summarize_capabilities` when you need a fast "
-    "answer about what a service can do at the SDK level. Use `huaweicloud_resolve_defaults` "
-    "when the user request is vague and you need a least-input service profile. Use service-specific "
-    "`*_list_operations`, `*_describe_operation`, and `*_call_operation` tools when "
-    "available, or the generic `huaweicloud_*` "
-    "tools when you need alias resolution or explicit `api_version` selection.\n\n"
-    f"Supported SDK-backed service families include: {_SUPPORTED_SERVICE_NAMES}."
+    "Prefer direct workflow tools over raw SDK calls: `ecs_create_vm` for compute, "
+    "`sfs_create_accessible_share` for shared storage, `swr_upload_image` for containers, "
+    "`functiongraph_deploy_code` for serverless, `cce_get_kubeconfig` + `k8s_*`/`helm_*` for Kubernetes, "
+    "`obs_*` for object storage, `lts_query_logs` for observability, and `ssh_*` for post-provisioning. "
+    "Use raw SDK tools only for uncommon operations or when a workflow helper cannot express the request.\n\n"
+    "The default MCP catalog hides generated per-service SDK tools to save context. "
+    f"Set `{_GENERATED_SERVICE_TOOL_ENV}=all` or a comma-separated service allowlist to expose them. "
+    "Generic `huaweicloud_*` SDK tools remain available.\n\n"
+    "Use `huaweicloud_list_services` to discover supported services and aliases, "
+    "`huaweicloud_summarize_capabilities` to inspect service capabilities, "
+    "`huaweicloud_resolve_defaults` for least-input profiles, and generic `huaweicloud_*` tools "
+    "(`list_operations`, `describe_operation`, `call_operation`) for direct SDK access."
 )
 
 mcp = FastMCP("huawei-cloud", instructions=_MCP_INSTRUCTIONS)
@@ -395,14 +379,13 @@ def _list_supported_services_for_mcp(query: str | None = None) -> dict[str, obje
         service_name = service.get("service")
         if isinstance(service_name, str) and not _generated_service_tool_enabled(service_name):
             service["service_tools"] = []
-        service["generic_sdk_tools"] = [
-            "huaweicloud_list_operations",
-            "huaweicloud_describe_operation",
-            "huaweicloud_call_operation",
-        ]
         if service_name == "ecs":
             service["workflow_tools"] = ["ecs_create_vm"]
+        if not query:
+            service.pop("implementation", None)
+            service.pop("sdk_package_root", None)
     result["tooling_notes"] = [
+        "Generic SDK tools available for every service: huaweicloud_list_operations, huaweicloud_describe_operation, huaweicloud_call_operation.",
         "Generated per-service SDK tools are hidden from the MCP catalog by default to save tokens.",
         f"Set {_GENERATED_SERVICE_TOOL_ENV}=all or a comma-separated service allowlist to expose them.",
         "Prefer workflow_tools when present; use generic_sdk_tools for uncommon operations.",
@@ -502,6 +485,7 @@ def ecs_list_compatible_flavors(
     min_ram_gb: int | None = None,
     eni_required: bool = False,
     availability_zone: str | None = None,
+    limit: int = 25,
     project_id: str | None = None,
     endpoint: str | None = None,
 ) -> dict[str, object]:
@@ -520,6 +504,7 @@ def ecs_list_compatible_flavors(
                 min_ram_gb=min_ram_gb,
                 eni_required=eni_required,
                 az=availability_zone,
+                limit=limit,
             ),
         }
     )
@@ -944,10 +929,12 @@ def postgres_execute_sql(
             execution_backend=execution_backend,
             container_image=container_image,
             env=env,
+            network="host" if host in {"localhost", "127.0.0.1"} else None,
         )
-        rows = _parse_psql_rows(result["stdout"])
+        rows = _parse_psql_rows(result.get("stdout", ""))
         return {
-            **result,
+            "backend": result.get("backend"),
+            "exit_status": result.get("exit_status"),
             "host": host,
             "port": port,
             "database": database,

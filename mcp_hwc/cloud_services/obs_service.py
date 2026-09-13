@@ -67,6 +67,22 @@ class ObsService:
     def from_config(cls, config: ObsConfig) -> "ObsService":
         return cls(config)
 
+    def close(self) -> None:
+        """Close all cached ObsClient connections and connection pools."""
+        for client in self._clients.values():
+            if hasattr(client, "close") and callable(client.close):
+                try:
+                    client.close()
+                except Exception:
+                    pass
+        self._clients.clear()
+
+    def __enter__(self) -> "ObsService":
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self.close()
+
     def list_buckets(self) -> dict[str, object]:
         response = self._require_success(
             self._discovery_client().listBuckets(isQueryLocation=True),
@@ -272,20 +288,14 @@ class ObsService:
             f"head object '{object_key}' in bucket '{bucket_name}'",
         )
         header = _get_attr(response, "header", "body")
+        parsed = _parse_headers(header)
 
         return {
             "bucket": bucket_name,
             "key": object_key,
             "region": resolved_region,
             "endpoint": endpoint,
-            "etag": _get_attr(header, "etag"),
-            "content_length": _get_attr(
-                header, "contentLength", "content_length", "content_length_value"
-            ),
-            "content_type": _get_attr(header, "contentType", "content_type"),
-            "last_modified": _get_attr(header, "lastModified", "last_modified"),
-            "version_id": _get_attr(header, "versionId", "version_id"),
-            "metadata": _get_attr(header, "metadata", default={}) or {},
+            **parsed,
         }
 
     def put_text_object(
@@ -367,6 +377,9 @@ class ObsService:
             f"download object '{object_key}' from bucket '{bucket_name}'",
         )
 
+        header = getattr(response, "header", None)
+        parsed = _parse_headers(header)
+
         return {
             "bucket": bucket_name,
             "key": object_key,
@@ -374,7 +387,7 @@ class ObsService:
             "endpoint": endpoint,
             "destination_path": str(resolved_destination_path),
             "size_bytes": resolved_destination_path.stat().st_size,
-            "etag": _get_attr(response.header, "etag") if hasattr(response, "header") else None,
+            "etag": parsed["etag"],
             "downloaded": True,
         }
 
@@ -521,6 +534,92 @@ def _get_attr(obj: Any, *names: str, default: Any = None) -> Any:
         if hasattr(obj, name):
             return getattr(obj, name)
     return default
+
+
+def _parse_headers(header: Any) -> dict[str, Any]:
+    if header is None:
+        return {
+            "etag": None,
+            "content_length": None,
+            "content_type": None,
+            "last_modified": None,
+            "version_id": None,
+            "metadata": {},
+        }
+
+    raw_dict: dict[str, Any] = {}
+    if isinstance(header, (list, tuple)):
+        for item in header:
+            if isinstance(item, (list, tuple)) and len(item) == 2:
+                raw_dict[str(item[0]).lower()] = item[1]
+    elif isinstance(header, dict):
+        raw_dict = {str(k).lower(): v for k, v in header.items()}
+    else:
+        for attr in (
+            "etag",
+            "content_length",
+            "contentLength",
+            "content_type",
+            "contentType",
+            "last_modified",
+            "lastModified",
+            "version_id",
+            "versionId",
+            "metadata",
+        ):
+            if hasattr(header, attr):
+                raw_dict[attr.lower()] = getattr(header, attr)
+
+    etag = raw_dict.get("etag")
+    if isinstance(etag, str):
+        etag = etag.strip('"')
+
+    content_length = (
+        raw_dict.get("contentlength")
+        or raw_dict.get("content_length")
+        or raw_dict.get("content-length")
+        or raw_dict.get("content_length_value")
+    )
+    if content_length is not None and not isinstance(content_length, int):
+        try:
+            content_length = int(content_length)
+        except (ValueError, TypeError):
+            pass
+
+    content_type = (
+        raw_dict.get("contenttype")
+        or raw_dict.get("content_type")
+        or raw_dict.get("content-type")
+    )
+    last_modified = (
+        raw_dict.get("lastmodified")
+        or raw_dict.get("last_modified")
+        or raw_dict.get("last-modified")
+    )
+    version_id = (
+        raw_dict.get("versionid")
+        or raw_dict.get("version_id")
+        or raw_dict.get("version-id")
+        or raw_dict.get("x-obs-version-id")
+    )
+
+    metadata = raw_dict.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+        for k, v in raw_dict.items():
+            if k.startswith("x-obs-meta-"):
+                metadata[k[len("x-obs-meta-"):]] = v
+            elif k.startswith("x-amz-meta-"):
+                metadata[k[len("x-amz-meta-"):]] = v
+
+    return {
+        "etag": etag,
+        "content_length": content_length,
+        "content_type": content_type,
+        "last_modified": last_modified,
+        "version_id": version_id,
+        "metadata": metadata,
+    }
 
 
 def _resolve_local_source_path(source_path: str) -> Path:

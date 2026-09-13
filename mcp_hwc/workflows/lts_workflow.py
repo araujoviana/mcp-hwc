@@ -259,7 +259,7 @@ def query_lts_logs(
     if raw_logs is None:
         raw_logs = response.get("logs")
     if raw_logs is None:
-        raw_logs = response.get("analysis_logs")
+        raw_logs = response.get("analysisLogs") or response.get("analysis_logs")
     raw_logs = raw_logs or []
     filtered_logs = filter_lts_logs(
         raw_logs,
@@ -288,4 +288,5 @@ def query_lts_logs(
             threshold=spool_threshold,
         )
     )
+    result.pop("response", None)
     return result

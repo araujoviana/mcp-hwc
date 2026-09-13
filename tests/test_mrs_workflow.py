@@ -179,8 +179,9 @@ def test_run_sql_submits_and_polls_until_finished() -> None:
     submit_op, submit_payload = v2.calls[0]
     assert submit_op == "execute_sql"
     assert submit_payload["cluster_id"] == "c-123"
-    assert submit_payload["sql_type"] == "hive"
-    assert submit_payload["sql_content"] == "SHOW DATABASES"
+    submit_body = submit_payload.get("body", submit_payload)
+    assert submit_body["sql_type"] == "hive"
+    assert submit_body["sql_content"] == "SHOW DATABASES"
     poll_op, poll_payload = v2.calls[1]
     assert poll_op == "show_sql_result"
     assert poll_payload == {"cluster_id": "c-123", "sql_id": "sql-1"}
@@ -201,7 +202,9 @@ def test_run_sql_returns_immediately_when_finished() -> None:
 
     assert result["rows"] == [["1"]]
     assert [op for op, _ in v2.calls] == ["execute_sql"]
-    assert v2.calls[0][1]["sql_type"] == "spark"
+    first_call_payload = v2.calls[0][1]
+    body = first_call_payload.get("body", first_call_payload)
+    assert body["sql_type"] == "spark"
 
 
 def test_run_sql_spools_large_result_to_obs() -> None:
@@ -295,9 +298,10 @@ def test_submit_job_returns_job_id_without_waiting() -> None:
     op, payload = v2.calls[0]
     assert op == "create_execute_job"
     assert payload["cluster_id"] == "c-123"
-    assert payload["job_type"] == "SparkSubmit"
-    assert payload["job_name"] == "wordcount"
-    assert payload["arguments"] == ["--class", "Main", "obs://bucket/app.jar"]
+    body = payload.get("body", payload)
+    assert body["job_type"] == "SparkSubmit"
+    assert body["job_name"] == "wordcount"
+    assert body["arguments"] == ["--class", "Main", "obs://bucket/app.jar"]
 
 
 def test_submit_job_wait_polls_job_state() -> None:

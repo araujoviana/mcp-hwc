@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shlex
+import time
 import uuid
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -31,30 +32,50 @@ def mount_sfs_share_via_ssh(
     password: str,
     export_location: str,
     mount_path: str,
+    max_retries: int = 12,
+    retry_delay_s: float = 5.0,
 ) -> dict[str, object]:
     q_export = shlex.quote(export_location)
     q_mount = shlex.quote(mount_path)
     fstab_needle = shlex.quote(export_location + " " + mount_path + " nfs ")
 
-    def run(cmd: str) -> dict:
-        result = ssh_service.execute(
-            host=host,
-            username=username,
-            command=cmd,
-            password=password,
-            allow_unknown_host=True,
-            connect_timeout=20,
-            command_timeout=600,
-        )
-        if result["exit_status"] != 0:
-            raise HelperToolError(
-                f"Failed to prepare SFS mount on {username}@{host}: {result['stderr'] or result['stdout']}"
-            )
-        return result
+    def run(cmd: str, *, retry_connect: bool = False) -> dict:
+        attempts = max_retries if retry_connect else 1
+        for attempt in range(attempts):
+            try:
+                result = ssh_service.execute(
+                    host=host,
+                    username=username,
+                    command=cmd,
+                    password=password,
+                    allow_unknown_host=True,
+                    connect_timeout=20,
+                    command_timeout=600,
+                )
+                if result.get("exit_status") == 0:
+                    return result
+                if not retry_connect or attempt == attempts - 1:
+                    raise HelperToolError(
+                        f"Failed to prepare SFS mount on {username}@{host}: {result.get('stderr') or result.get('stdout')}"
+                    )
+            except Exception as exc:
+                if not retry_connect or attempt == attempts - 1:
+                    raise HelperToolError(
+                        f"Failed to connect or execute on {username}@{host}: {exc}"
+                    ) from exc
+            time.sleep(retry_delay_s)
+        raise HelperToolError(f"SSH command failed after {attempts} attempts")
 
-    run(
-        "dpkg -s nfs-common >/dev/null 2>&1 || { apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y nfs-common; }"
+    install_cmd = (
+        "if command -v apt-get >/dev/null 2>&1; then "
+        "dpkg -s nfs-common >/dev/null 2>&1 || { apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y nfs-common; }; "
+        "elif command -v yum >/dev/null 2>&1; then "
+        "rpm -q nfs-utils >/dev/null 2>&1 || yum install -y nfs-utils; "
+        "elif command -v zypper >/dev/null 2>&1; then "
+        "rpm -q nfs-client >/dev/null 2>&1 || zypper install -y nfs-client; "
+        "fi"
     )
+    run(install_cmd, retry_connect=True)
     run(f"mkdir -p {q_mount}")
     run(f"mount -t nfs -o vers=3,timeo=600,noresvport,nolock {q_export} {q_mount}")
     run(f"printf 'sfs proof %s\\n' \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\" > {q_mount}/proof.txt")

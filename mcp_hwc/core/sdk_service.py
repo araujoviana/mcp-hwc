@@ -5,6 +5,7 @@ import re
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from functools import lru_cache
 from importlib import import_module
 from typing import Any, Callable, Literal, Sequence
@@ -17,7 +18,16 @@ from huaweicloudsdkcore.utils.http_utils import sanitize_for_serialization
 from mcp_hwc.core.config import CloudApiConfig
 from mcp_hwc.core.errors import build_access_denied_hint, is_access_denied
 
-_PRIMITIVE_TYPES = {"str", "int", "float", "bool", "object"}
+_PRIMITIVE_TYPES = {
+    "str",
+    "int",
+    "float",
+    "bool",
+    "object",
+    "decimal.Decimal",
+    "date",
+    "long",
+}
 _PASSTHROUGH_TYPES = _PRIMITIVE_TYPES | {"none_type", "NoneType"}
 _SERVICE_KEY_PATTERN = re.compile(r"[^a-z0-9]+")
 
@@ -1489,7 +1499,7 @@ SERVICE_SPECS = {
         implementation_name="cdn",
         sdk_package_root="huaweicloudsdkcdn",
         env_key="CDN",
-        credential_scope="basic",
+        credential_scope="global",
         default_api_version="v2",
         versions=_CDN_VERSIONS,
         aliases=("content_delivery_network",),
@@ -1667,7 +1677,7 @@ SERVICE_SPECS = {
         implementation_name="config",
         sdk_package_root="huaweicloudsdkconfig",
         env_key="CONFIG",
-        credential_scope="basic",
+        credential_scope="global",
         default_api_version="v1",
         versions=_CONFIG_VERSIONS,
         aliases=("resource_governance_config",),
@@ -1737,7 +1747,7 @@ SERVICE_SPECS = {
         implementation_name="aad",
         sdk_package_root="huaweicloudsdkaad",
         env_key="AAD",
-        credential_scope="basic",
+        credential_scope="global",
         default_api_version="v2",
         versions=_AAD_VERSIONS,
         aliases=("advanced_anti_ddos",),
@@ -2062,7 +2072,7 @@ SERVICE_SPECS = {
         implementation_name="geip",
         sdk_package_root="huaweicloudsdkgeip",
         env_key="GEIP",
-        credential_scope="basic",
+        credential_scope="global",
         default_api_version="v3",
         versions=_GEIP_VERSIONS,
         aliases=("global_eip",),
@@ -2294,6 +2304,7 @@ class HuaweiCloudSdkService:
             raise HuaweiCloudSdkError(str(exc)) from exc
 
         sanitized_response = sanitize_for_serialization(response)
+        sanitized_response = _sanitize_json_primitives(sanitized_response)
         if fields:
             sanitized_response = project_response_fields(sanitized_response, fields)
 
@@ -2673,6 +2684,18 @@ def _extract_operation_resource_tokens(operation: str) -> list[str]:
     return resource_tokens
 
 
+def _sanitize_json_primitives(obj: Any) -> Any:
+    if isinstance(obj, Decimal):
+        return float(obj) if "." in str(obj) else int(obj)
+    if isinstance(obj, dict):
+        return {k: _sanitize_json_primitives(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_json_primitives(v) for v in obj]
+    if isinstance(obj, tuple):
+        return tuple(_sanitize_json_primitives(v) for v in obj)
+    return obj
+
+
 def _coerce_primitive(expected_type: str, value: Any) -> Any:
     if expected_type == "object":
         return value
@@ -2680,14 +2703,14 @@ def _coerce_primitive(expected_type: str, value: Any) -> Any:
         if isinstance(value, (str, int, float, bool)):
             return str(value)
         raise ValueError("String fields must be strings, numbers, or booleans")
-    if expected_type == "int":
+    if expected_type in {"int", "long"}:
         if isinstance(value, bool):
-            raise ValueError("Integer fields cannot be booleans")
+            raise ValueError(f"{expected_type.capitalize()} fields cannot be booleans")
         if isinstance(value, int):
             return value
         if isinstance(value, str):
             return int(value)
-        raise ValueError("Integer fields must be integers")
+        raise ValueError(f"{expected_type.capitalize()} fields must be integers")
     if expected_type == "float":
         if isinstance(value, bool):
             raise ValueError("Float fields cannot be booleans")
@@ -2700,6 +2723,18 @@ def _coerce_primitive(expected_type: str, value: Any) -> Any:
         if isinstance(value, bool):
             return value
         raise ValueError("Boolean fields must be true or false")
+    if expected_type == "decimal.Decimal":
+        if isinstance(value, Decimal):
+            return value
+        if isinstance(value, (int, float, str)):
+            return Decimal(str(value))
+        raise ValueError("Decimal fields must be numeric or decimal strings")
+    if expected_type == "date":
+        if isinstance(value, str):
+            return value
+        if hasattr(value, "isoformat"):
+            return value.isoformat()
+        return str(value)
     return value
 
 
@@ -2814,10 +2849,13 @@ def render_dense_type_schema(
     primitive_map = {
         "str": "string",
         "int": "number",
+        "long": "number",
         "float": "number",
         "bool": "boolean",
         "object": "any",
         "datetime": "string /* ISO-8601 */",
+        "date": "string /* YYYY-MM-DD */",
+        "decimal.Decimal": "number",
         "none_type": "null",
         "NoneType": "null",
     }

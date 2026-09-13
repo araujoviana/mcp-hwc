@@ -1,45 +1,39 @@
-<img src="docs/assets/logo.png" alt="mcp-hwc logo" width="96" height="96">
+<img src="docs/assets/logo.png" alt="mcp-hwc logo" width="80" height="80">
 
 # mcp-hwc
 
-Control Huawei Cloud from an AI assistant. `mcp-hwc` is an **MCP server**: it exposes Huawei Cloud as tools an assistant like Claude Code or OpenCode can call directly, so you provision a VM, deploy a function, or tail a cluster's logs by just asking, instead of hand-rolling SDK calls or clicking through the console.
+Control **Huawei Cloud** directly from your AI assistant.
 
-It wraps 75+ Huawei Cloud SDKs and 3,000+ API operations, but the assistant only ever sees a small, curated surface: a handful of workflow tools for the jobs people actually do, backed by a generic reflection layer for everything else. That split is deliberate: it keeps the tool catalog cheap enough to fit in an agent's context every turn, instead of eating half the window before the conversation even starts.
+`mcp-hwc` is a Model Context Protocol (MCP) server that connects tools like Claude Code or OpenCode to Huawei Cloud. Provision VMs, manage Kubernetes, deploy serverless code, query logs, or inspect pricing using natural language.
 
-> **⚠️ This creates real, billable cloud resources.** Every VM, cluster, or bucket the assistant provisions costs money and keeps costing money until you tear it down. Review what a tool call is about to do before approving it, and don't run this in a fully auto-approve mode unless you genuinely don't care what gets created or what it costs.
+> ⚠️ **Resource Warning:** Operations create real, billable cloud resources. Review planned actions before approving tool execution.
 
-> **🚧 Early-phase project.** `mcp-hwc` is under active development and its interfaces can still change between versions. If you hit a bug, an incorrect tool result, or unexpected behavior, please [open an issue](https://github.com/araujoviana/mcp-hwc/issues) so it can get fixed.
+---
 
-## New to MCP?
+## Quick Start
 
-MCP (Model Context Protocol) is how AI assistants talk to external systems. An MCP server is a small program that runs on your machine and exposes "tools" (like `ecs_create_vm`) that the assistant can call on your behalf.
+### Prerequisites
+- Python 3.13+ and [uv](https://docs.astral.sh/uv/)
+- Huawei Cloud credentials (`HWC_AK` and `HWC_SK` from *My Credentials → Access Keys*)
 
-You never call these tools yourself. You tell your assistant *"create a small Ubuntu VM in São Paulo"*, and it picks the right tool, fills in sensible defaults, and asks you only when a choice really matters (cost, region, security).
-
-## Quick start
-
-You need [uv](https://docs.astral.sh/uv/) installed, and a Huawei Cloud **Access Key** (AK) and **Secret Key** (SK). Create them in the Huawei Cloud console under *My Credentials → Access Keys*.
+### 1. Install & Configure
 
 ```bash
-# 1. Get the code and install dependencies
 git clone https://github.com/araujoviana/mcp-hwc && cd mcp-hwc
 uv sync --dev
 
-# 2. Set your credentials
 cp .env.example .env
-# edit .env and fill in HWC_AK and HWC_SK
+# Edit .env with your HWC_AK and HWC_SK
 ```
 
-Then connect it to your assistant:
+### 2. Connect to Your Assistant
 
 **Claude Code**
-
 ```bash
 claude mcp add hwc -- uv --directory /path/to/mcp-hwc run mcp-hwc
 ```
 
-**OpenCode** — add to `~/.config/opencode/opencode.jsonc` (or `.opencode/opencode.json` in a project):
-
+**OpenCode** (add to `~/.config/opencode/opencode.jsonc` or `.opencode/opencode.json`):
 ```json
 "mcp": {
   "hwc": {
@@ -50,58 +44,59 @@ claude mcp add hwc -- uv --directory /path/to/mcp-hwc run mcp-hwc
 }
 ```
 
-That's it. Open your assistant and try one of the prompts below.
+---
 
 ## Configuration
 
-Set these in `.env` (or export them):
+Set in `.env` or export in your shell:
 
-| Variable | Required | What it is |
-|---|---|---|
-| `HWC_AK` | yes | Access Key ID |
-| `HWC_SK` | yes | Secret Access Key |
-| `HWC_SECURITY_TOKEN` | no | Only for temporary credentials |
-| `HWC_REGION`, `HWC_PROJECT_ID` | no | Usually resolved automatically from your request and IAM |
-| `MCP_HWC_ENABLE_SERVICE_TOOLS` | no | Expose per-service SDK tools (`all` or e.g. `ecs,vpc`); hidden by default to keep the assistant's context small |
+| Variable | Required | Description |
+| :--- | :---: | :--- |
+| `HWC_AK` | **Yes** | Access Key ID |
+| `HWC_SK` | **Yes** | Secret Access Key |
+| `HWC_SECURITY_TOKEN` | No | Temporary security token (if using STS/IAM) |
+| `HWC_REGION` | No | Default region (e.g. `sa-brazil-1`, `la-south-2`). Auto-inferred if omitted. |
+| `HWC_PROJECT_ID` | No | Resolved automatically via IAM when region is known. |
+| `MCP_HWC_ENABLE_SERVICE_TOOLS` | No | Expose raw per-service SDK tools (`all` or e.g. `ecs,vpc`). Hidden by default to minimize context overhead. |
 
-### Multiple accounts
+### Multi-Account Profiles
+Create profile files alongside `.env` (e.g. `.env.work`, `.env.personal`):
+- Switch in chat: *"Switch to my work account"* (calls `hwc_switch_profile("work")`)
+- Inspect active accounts: *"Which account is active?"* (calls `hwc_list_profiles`)
 
-Keep one credential file per account next to `.env`: e.g. `.env.work`, `.env.personal` (same format as `.env`; they are gitignored). Then just ask your assistant:
+---
 
-> "Switch to my work account"
+## Example Prompts
 
-It calls `hwc_switch_profile("work")` and every later call uses that account, no restart needed. `hwc_list_profiles` shows what's available and which is active. `.env` itself is the `default` profile.
+- **Compute**: *"Create an Ubuntu VM in São Paulo that I can SSH into"*
+- **Serverless**: *"Deploy this directory as a FunctionGraph function"*
+- **Containers**: *"Push local image `my-app:v1` to SWR"*
+- **Kubernetes**: *"Get kubeconfig for my CCE cluster and list failing pods"*
+- **Observability**: *"Query LTS logs for error traces in the last hour"*
+- **Big Data**: *"Run `SHOW DATABASES` in Hive on MRS cluster `analytics`"*
+- **Storage**: *"Upload this file to bucket `my-data` and get a signed URL"*
+- **Pricing**: *"Estimate monthly cost for a c6.large.2 ECS with 100GB SSD in Santiago"*
 
-Prefer picking the account at startup instead? Register the server twice (e.g. `hwc-work`, `hwc-personal`), each with `MCP_HWC_ENV_FILE` pointing at a different file.
+---
 
-## What can I ask for?
+## Architecture
 
-- *"Create a small Debian VM in Santiago I can SSH into"* → provisions the VPC, subnet, security group, and server, and returns the IP
-- *"Deploy this folder as a FunctionGraph function"*
-- *"Push this Docker image to SWR"*
-- *"Get the kubeconfig for my CCE cluster and show failing pods"*
-- *"Query the LTS logs of my app for errors in the last hour"*
-- *"Run `SHOW DATABASES` in Hive on my MRS cluster"* or *"list the Kafka topics on cluster analytics"*
+To keep context windows small and token costs low, `mcp-hwc` uses a 3-tier structure:
 
-## How it works
+1. **Workflow Helpers**: Curated high-level tools for common operations (`ecs_create_vm`, `obs_*`, `swr_upload_image`, `functiongraph_deploy_code`, `lts_query_logs`, `cce_*`, `k8s_*`, `mrs_*`).
+2. **Resource Discovery**: Smart defaults and intent resolution (`huaweicloud_resolve_defaults`, `huaweicloud_summarize_capabilities`).
+3. **Generic SDK Reflection**: Full access to 75+ Huawei Cloud SDKs and 3,000+ API operations (`huaweicloud_call_operation`) without bloating the assistant's schema.
 
-The server offers tools in three layers, and the assistant picks the highest one that fits:
+### Highlights
+- **Token Efficient**: Dense TypeScript signatures, compact table outputs, and automatic local/OBS spooling reduce token footprint by up to 98%.
+- **Hardened Security**: Masked passwords/tokens in CLI output, automated `docker logout`, and host key verification for SSH.
+- **Self-Contained**: `kubectl` and `helm` execute via local binaries or containerized fallbacks automatically.
 
-1. **Discovery** — `huaweicloud_list_services`, `huaweicloud_summarize_capabilities`, `huaweicloud_resolve_defaults`: find out what's possible and get least-input defaults.
-2. **Workflow helpers** — one-call tools for common jobs: `ecs_create_vm`, `obs_*` (object storage), `ssh_*`, `swr_upload_image`, `functiongraph_deploy_code`, `lts_query_logs`, `cce_get_kubeconfig`, `k8s_*`, `helm_*`, `mrs_*` (Hive/Spark SQL, jobs, and node/component CLIs on MRS clusters).
-3. **Generic SDK access** — `huaweicloud_list_operations` / `describe_operation` / `call_operation` can call any operation of any supported Huawei Cloud SDK, for the cases no helper covers.
-
-Coverage spans 75+ services (ECS, CCE, RDS, OBS, VPC, MRS, DMS, and more) with aliases like `geminidb` → `gaussdb_nosql`. Not wired: ModelArts core and CCI (no published Python SDKs). `kubectl` and `helm` run from local binaries or fall back to a container, so your machine doesn't need them installed.
-
-## Highlights
-
-- **Small context footprint.** The generic SDK layer renders dense, TypeScript-style schemas instead of raw SDK ASTs (~83% smaller), supports response field projection to strip hypervisor/API noise, and can format list results as Markdown tables instead of nested JSON. Benchmarked in `tests/test_stream2_token_optimization.py`.
-- **Hardened by default.** SSH connections verify host keys against `known_hosts` and reject unknown hosts unless explicitly allowed; secrets are masked in config `repr()` and CLI error output; shell arguments are quoted before reaching SSH/subprocess calls; SFS shares default to `root_squash`.
+---
 
 ## Development
 
 ```bash
-uv run pytest   # 161 tests
+uv run pytest          # Run unit tests (200 tests)
+uv run ruff check .    # Lint and style checks
 ```
-
-`ruff` is configured in `pyproject.toml` for linting and formatting.

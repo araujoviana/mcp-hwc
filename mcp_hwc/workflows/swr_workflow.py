@@ -11,9 +11,11 @@ from mcp_hwc.core.sdk_service import HuaweiCloudSdkError, HuaweiCloudSdkService
 
 def looks_like_existing_resource_error(message: str) -> bool:
     lowered = message.casefold()
+    if "not exist" in lowered or "does not exist" in lowered:
+        return False
     return any(
         token in lowered
-        for token in ("already exists", "already exist", "duplicate", "conflict", "exist")
+        for token in ("already exists", "already exist", "duplicate", "conflict")
     )
 
 
@@ -166,8 +168,14 @@ def upload_swr_image(
         [resolved_cli, "login", "--username", username, "--password-stdin", registry_host],
         input_text=password,
     )
-    run_local_command([resolved_cli, "tag", source_image, target_image])
-    push_result = run_local_command([resolved_cli, "push", target_image])
+    try:
+        run_local_command([resolved_cli, "tag", source_image, target_image])
+        push_result = run_local_command([resolved_cli, "push", target_image])
+    finally:
+        try:
+            run_local_command([resolved_cli, "logout", registry_host])
+        except Exception:
+            pass
 
     return {
         "service": "swr",
@@ -180,7 +188,7 @@ def upload_swr_image(
         "tag": tag,
         "source_image": source_image,
         "target_image": target_image,
-        "authorization_expires_at": token_response.get("x_swr_expireat"),
+        "authorization_expires_at": token_response.get("x-swr-expireat") or token_response.get("x_swr_expireat"),
         "login_stdout": login_result.stdout,
         "push_stdout": push_result.stdout,
         "pushed": True,

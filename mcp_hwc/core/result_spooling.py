@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable, Sequence
 
 from mcp_hwc.core.sdk_service import format_list_as_markdown_table
@@ -23,6 +24,7 @@ def spool_rows_if_large(
     preview_rows: int = DEFAULT_PREVIEW_ROWS,
     object_key: str | None = None,
     auto_create_bucket: bool = True,
+    allow_local_spool: bool = False,
 ) -> dict[str, object]:
     """Return rows unchanged when small; otherwise upload the full set to OBS
     as JSON and return a compact Markdown preview + OBS location.
@@ -37,6 +39,21 @@ def spool_rows_if_large(
         return {data_key: list(rows), "total_rows": total, "spooled": False}
 
     if not bucket_name or obs_service_factory is None:
+        if allow_local_spool:
+            spool_dir = Path("/tmp/mcp-hwc-spool")
+            spool_dir.mkdir(parents=True, exist_ok=True)
+            local_path = spool_dir / f"{source}-{uuid.uuid4().hex[:8]}.json"
+            local_path.write_text(
+                json.dumps(list(rows), ensure_ascii=False, default=str), encoding="utf-8"
+            )
+            return {
+                data_key: None,
+                "preview": format_list_as_markdown_table(list(rows[:preview_rows])),
+                "total_rows": total,
+                "spooled": True,
+                "local_file_path": str(local_path),
+            }
+
         # No spool target configured: return the full result as before rather than
         # failing the query, but tell the caller how to opt into offloading.
         return {

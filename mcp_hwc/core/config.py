@@ -22,7 +22,7 @@ class ConfigError(ValueError):
 
 
 _HUAWEI_ENDPOINT_REGION_PATTERN = re.compile(
-    r"^[a-z0-9-]+\.(?P<region>[a-z0-9-]+)\.myhuaweicloud\.com$"
+    r"^[a-z0-9-]+\.(?P<region>[a-z0-9-]+)\.myhuaweicloud\.(?:com|eu)$"
 )
 
 

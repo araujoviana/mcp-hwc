@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 
 DEFAULT_POLL_INTERVAL_SECONDS = 60
 MIN_POLL_INTERVAL_SECONDS = 60
+DEFAULT_FAILURE_VALUES = ("FAIL", "FAILED", "ERROR", "300")
 
 
 def parse_path_segments(path: str) -> list[str | int]:
@@ -110,11 +111,16 @@ def wait_for_service_value(
     match_mode: str = "equals",
     timeout_seconds: int = 1200,
     interval_seconds: int = DEFAULT_POLL_INTERVAL_SECONDS,
+    failure_values: tuple[object, ...] | list[object] | None = None,
 ) -> dict[str, object]:
     if timeout_seconds <= 0:
         raise ValueError("timeout_seconds must be greater than zero")
     effective_interval = resolve_poll_interval(interval_seconds)
     deadline = time.monotonic() + timeout_seconds
+
+    check_failures = DEFAULT_FAILURE_VALUES if failure_values is None else tuple(failure_values)
+    failure_set = {str(f).upper() for f in check_failures}
+
     while True:
         result = service.call_operation(operation, parameters)
         value = extract_path_value(result, response_path)
@@ -124,8 +130,18 @@ def wait_for_service_value(
             match_mode=match_mode,
         ):
             return result
+
+        if failure_set and value is not None:
+            val_str = str(value).upper()
+            if val_str in failure_set and (expected_value is None or val_str != str(expected_value).upper()):
+                service_name = getattr(getattr(service, "_spec", None), "name", "service")
+                raise HelperToolError(
+                    f"Operation {service_name}.{operation} entered terminal failure state: {value!r}"
+                )
+
         if time.monotonic() >= deadline:
+            service_name = getattr(getattr(service, "_spec", None), "name", "service")
             raise HelperToolError(
-                f"Timed out waiting for {service._spec.name}.{operation} {response_path}; last value was {value!r}"
+                f"Timed out waiting for {service_name}.{operation} {response_path}; last value was {value!r}"
             )
         sleep_before_next_poll(deadline, effective_interval)

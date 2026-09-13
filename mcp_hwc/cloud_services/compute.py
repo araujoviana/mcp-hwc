@@ -177,7 +177,12 @@ def pick_access_vm_flavor(
         flavor_id = flavor.get("id")
         if not isinstance(flavor_id, str) or not flavor_id.strip():
             continue
-        if "gpus" in flavor and flavor.get("gpus"):
+        extra_specs = flavor.get("os_extra_specs") or {}
+        if (
+            flavor.get("gpus")
+            or extra_specs.get("info:gpus")
+            or extra_specs.get("pci_passthrough:enable_gpu")
+        ):
             continue
         normal_azs = normal_azs_for_flavor(flavor)
         if not normal_azs:
@@ -380,15 +385,13 @@ def list_compatible_ecs_flavors(
     min_ram_gb: int | None = None,
     eni_required: bool = False,
     az: str | None = None,
+    limit: int = 25,
 ) -> list[dict[str, object]]:
     """List ECS flavors compatible with the specified resource requirements."""
-    try:
-        response = ecs_service.call_operation("list_flavors", {"limit": 500})
-    except Exception:
-        response = ecs_service.call_operation("list_flavors_details", {"limit": 500})
+    response = ecs_service.call_operation("list_flavors", {"limit": 500})
 
     flavors = response["response"].get("flavors") or []
-    compatible = []
+    compatible: list[dict[str, object]] = []
 
     for f in flavors:
         vcpus = int(str(f.get("vcpus") or 0))
@@ -401,22 +404,34 @@ def list_compatible_ecs_flavors(
             continue
 
         extra_specs = f.get("os_extra_specs") or {}
-
-        if eni_required:
-            sub_eni = extra_specs.get("sub_network_interface_max_num")
-            if sub_eni is None:
-                continue
+        sub_eni = extra_specs.get("quota:sub_network_interface_max_num") or extra_specs.get(
+            "sub_network_interface_max_num"
+        )
+        has_eni = False
+        if sub_eni is not None:
             try:
-                if int(sub_eni) <= 0:
-                    continue
+                has_eni = int(sub_eni) > 0
             except (ValueError, TypeError):
-                continue
+                has_eni = False
 
-        if az:
-            normal_azs = normal_azs_for_flavor(f)
-            if az not in normal_azs:
-                continue
+        if eni_required and not has_eni:
+            continue
 
-        compatible.append(f)
+        normal_azs = normal_azs_for_flavor(f)
+        if az and az not in normal_azs:
+            continue
+
+        compatible.append(
+            {
+                "id": f.get("id"),
+                "name": f.get("name"),
+                "vcpus": vcpus,
+                "ram_gb": ram_gb,
+                "azs": normal_azs,
+                "supports_eni": has_eni,
+            }
+        )
+        if len(compatible) >= limit:
+            break
 
     return compatible

@@ -315,3 +315,48 @@ def test_call_operation_access_denied_without_policy_action_falls_back() -> None
 
     with pytest.raises(HuaweiCloudSdkError, match="did not include a specific"):
         service.call_operation("list_servers_details", {})
+
+
+def test_coerce_primitive_supports_decimal_long_date() -> None:
+    from decimal import Decimal
+
+    from mcp_hwc.core.sdk_service import _coerce_primitive
+
+    dec_val = _coerce_primitive("decimal.Decimal", "12.34")
+    assert isinstance(dec_val, Decimal)
+    assert dec_val == Decimal("12.34")
+
+    long_val = _coerce_primitive("long", "1000000000")
+    assert isinstance(long_val, int)
+    assert long_val == 1000000000
+
+    date_val = _coerce_primitive("date", "2026-09-13")
+    assert date_val == "2026-09-13"
+
+
+def test_call_operation_sanitizes_decimal_to_json_serializable() -> None:
+    import json
+    from decimal import Decimal
+
+    from mcp_hwc.core.sdk_service import _sanitize_json_primitives
+
+    raw = {"price": Decimal("99.95"), "items": [{"fee": Decimal("1.50")}]}
+    sanitized = _sanitize_json_primitives(raw)
+    assert isinstance(sanitized["price"], float)
+    # Must serialize with standard json.dumps without error
+    dumped = json.dumps(sanitized)
+    assert "99.95" in dumped
+
+
+def test_global_credential_scope_for_global_services() -> None:
+    for svc in ("cdn", "config", "aad", "geip"):
+        spec = resolve_service_spec(svc)
+        assert spec.credential_scope == "global", f"{svc} must use global credentials"
+
+
+def test_config_endpoint_region_supports_eu() -> None:
+    from mcp_hwc.core.config import _infer_region_from_endpoint
+
+    region = _infer_region_from_endpoint("https://ecs.eu-west-0.myhuaweicloud.eu")
+    assert region == "eu-west-0"
+

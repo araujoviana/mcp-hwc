@@ -56,7 +56,8 @@ class BssPricingBackend:
             from huaweicloudsdkiam.v3 import IamClient
             from huaweicloudsdkiam.v3.model import KeystoneListProjectsRequest
 
-            iam_region = SdkRegion(id=normalized, endpoint=f"iam.{self._domain_suffix()}")
+            iam_endpoint = f"https://iam.{self._domain_suffix()}"
+            iam_region = SdkRegion(id=normalized, endpoint=iam_endpoint)
             client = (
                 IamClient.new_builder()
                 .with_credentials(self._build_credentials())
@@ -113,7 +114,9 @@ class BssPricingBackend:
     def _build_client(self) -> BssClient:
         creds = self._build_credentials()
         region = self._config.region or "myhuaweicloud.com"
-        endpoint = self._config.endpoint or "bss.myhuaweicloud.com"
+        endpoint = self._config.endpoint or "https://bss.myhuaweicloud.com"
+        if not endpoint.startswith(("http://", "https://")):
+            endpoint = f"https://{endpoint}"
         sdk_region = SdkRegion(id=region, endpoint=endpoint)
 
         return BssClient.new_builder().with_credentials(creds).with_region(sdk_region).build()
@@ -133,10 +136,12 @@ class BssPricingBackend:
         if not items:
             raise PricingNotAvailable("No resources could be priced via BSS SDK")
 
+        currency = items[0].currency if items else "USD"
+
         return QuoteResult(
             quote_id=uuid.uuid4(),
             items=tuple(items),
-            currency="USD",
+            currency=currency,
             created_at=datetime.now(timezone.utc),
         )
 
@@ -155,7 +160,8 @@ class BssPricingBackend:
         if official is None or not official.product_rating_results:
             raise PricingNotAvailable("BSS subscription pricing returned no results")
 
-        return self._resolve_quote_items(official.product_rating_results, resources)
+        currency = getattr(response, "currency", None) or "USD"
+        return self._resolve_quote_items(official.product_rating_results, resources, currency=currency)
 
     def _quote_on_demand(self, resources: list[ResourceDescriptor]) -> list[QuoteItem]:
         product_infos = [
@@ -176,8 +182,13 @@ class BssPricingBackend:
         if not results:
             raise PricingNotAvailable("BSS on-demand pricing returned no results")
 
+        currency = getattr(response, "currency", None) or "USD"
         return self._resolve_quote_items(
-            results, resources, period_type_override="on_demand", period_num_override=1
+            results,
+            resources,
+            period_type_override="on_demand",
+            period_num_override=1,
+            currency=currency,
         )
 
     @staticmethod
@@ -187,6 +198,7 @@ class BssPricingBackend:
         *,
         period_type_override: str | None = None,
         period_num_override: int | None = None,
+        currency: str = "USD",
     ) -> list[QuoteItem]:
         items: list[QuoteItem] = []
         for pos, result in enumerate(raw_results):
@@ -213,7 +225,7 @@ class BssPricingBackend:
                     quantity=desc.quantity,
                     size=desc.size,
                     unit_price=unit_price,
-                    currency="USD",
+                    currency=currency,
                 )
             )
         return items

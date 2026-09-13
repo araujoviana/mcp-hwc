@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 
-def _sanitize_command(command: Sequence[str]) -> str:
+def _sanitize_command_tokens(command: Sequence[str]) -> list[str]:
     sanitized: list[str] = []
     skip_next = False
     for i, token in enumerate(command):
@@ -29,15 +29,19 @@ def _sanitize_command(command: Sequence[str]) -> str:
         elif (
             token_str == "-e"
             and i + 1 < len(command)
-            and re.search(r"(?i)(password|secret|token|key)=", command[i + 1])
+            and re.search(r"(?i)(password|secret|token|key)=", str(command[i + 1]))
         ):
             sanitized.append(token_str)
-            key, _, _ = command[i + 1].partition("=")
+            key, _, _ = str(command[i + 1]).partition("=")
             sanitized.append(f"{key}=***")
             skip_next = True
         else:
             sanitized.append(token_str)
-    return " ".join(sanitized)
+    return sanitized
+
+
+def _sanitize_command(command: Sequence[str]) -> str:
+    return " ".join(_sanitize_command_tokens(command))
 
 
 class CliServiceError(RuntimeError):
@@ -200,7 +204,7 @@ class CliService:
 
         return {
             "backend": backend,
-            "command": list(command),
+            "command": _sanitize_command_tokens(command),
             "exit_status": result.returncode,
             "stdout": result.stdout,
             "stderr": result.stderr,

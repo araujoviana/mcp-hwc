@@ -407,3 +407,45 @@ def test_service_raises_with_obs_error_details() -> None:
 
     with pytest.raises(ObsServiceError, match="AccessDenied"):
         service.get_bucket_location("demo-bucket")
+
+
+def test_head_object_parses_real_sdk_tuple_headers(tmp_path: Path) -> None:
+    regional_server = build_obs_server("ap-southeast-1")
+    raw_headers = [
+        ("etag", '"etag-from-sdk"'),
+        ("content-length", "42"),
+        ("content-type", "application/json"),
+        ("last-modified", "2026-09-13T12:00:00Z"),
+        ("x-obs-version-id", "vid-999"),
+        ("x-obs-meta-environment", "production"),
+        ("x-obs-meta-author", "alice"),
+    ]
+    closed = []
+
+    dest_file = tmp_path / "downloaded.txt"
+
+    def fake_get_object(bucketName, objectKey, **kwargs):
+        dest_file.write_text("downloaded content")
+        return make_response(200, None, header=raw_headers)
+
+    client_mock = SimpleNamespace(
+        headObject=lambda bucketName, objectKey, **kwargs: make_response(200, None, header=raw_headers),
+        getObject=fake_get_object,
+        close=lambda: closed.append(True),
+    )
+    factory = FakeClientFactory({regional_server: client_mock})
+    service = ObsService(make_config(), client_factory=factory)
+
+    head_res = service.head_object("demo-bucket", "data.json", region="ap-southeast-1")
+    assert head_res["etag"] == "etag-from-sdk"
+    assert head_res["content_length"] == 42
+    assert head_res["content_type"] == "application/json"
+    assert head_res["version_id"] == "vid-999"
+    assert head_res["metadata"] == {"environment": "production", "author": "alice"}
+
+    dl_res = service.download_object("demo-bucket", "data.json", str(dest_file), region="ap-southeast-1")
+    assert dl_res["etag"] == "etag-from-sdk"
+    assert dl_res["downloaded"] is True
+
+    service.close()
+    assert len(closed) == 1

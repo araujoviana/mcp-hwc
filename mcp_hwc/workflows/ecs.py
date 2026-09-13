@@ -87,6 +87,8 @@ def create_ecs_vm(
         availability_zone=availability_zone,
     )
 
+    resolved_region = getattr(getattr(ecs_service, "_config", None), "region", None) or region
+
     server_payload: dict[str, object] = {
         "imageRef": image["id"],
         "flavorRef": flavor["id"],
@@ -103,7 +105,7 @@ def create_ecs_vm(
         "availability_zone": vm_az,
         "extendparam": {
             "chargingMode": "postPaid",
-            "regionID": region,
+            "regionID": resolved_region,
             "isAutoPay": "true",
         },
     }
@@ -132,7 +134,7 @@ def create_ecs_vm(
     server_ids = extract_server_ids_from_response(response)
 
     result: dict[str, object] = {
-        "region": create_result.get("region") or region,
+        "region": create_result.get("region") or resolved_region,
         "name": resolved_name,
         "created": True,
         "waited": False,
