@@ -234,7 +234,7 @@ def get_quote_store() -> QuoteStore:
     return QuoteStore()
 
 
-@lru_cache(maxsize=None)
+@lru_cache(maxsize=128)
 def get_sdk_service(
     service_name: str,
     api_version: str | None = None,
@@ -283,6 +283,17 @@ for _service_name in SERVICE_SPECS:
 
 
 def clear_caches() -> None:
+    """Drop cached service clients so a credential/profile switch takes effect.
+
+    Closes the pooled OBS client (which owns persistent connections) before
+    releasing the cache; the SSH/CLI services are stateless, and SDK service
+    clients are released along with their cache entries.
+    """
+    if get_obs_service.cache_info().currsize:
+        try:
+            get_obs_service().close()
+        except Exception:  # noqa: BLE001 - best-effort cleanup, never block a switch
+            pass
     get_obs_service.cache_clear()
     get_ssh_service.cache_clear()
     get_cli_service.cache_clear()
@@ -520,7 +531,14 @@ def cce_monitor_provisioning(
     project_id: str | None = None,
     endpoint: str | None = None,
 ) -> dict[str, object]:
-    """Monitor CCE cluster, node pool, or node provisioning status until Active/Available."""
+    """Monitor CCE cluster, node pool, or node provisioning status until ready.
+
+    Ready conditions: cluster phase == "Available"; node phase == "Active";
+    node pool phase in {"", "Active", "Synchronized"} — CCE reports a settled
+    node pool under different status spellings across API versions, so accept
+    the known ready values rather than a single hard-coded status (which made
+    the previous "Active"-only check time out on healthy pools).
+    """
     return _run_tool_call(
         lambda: _wait_for_service_value(
             get_sdk_service(
@@ -544,7 +562,16 @@ def cce_monitor_provisioning(
                 "node_pool": "response.status.phase",
                 "node": "response.status.phase",
             }[resource_type],
-            expected_value="Available" if resource_type == "cluster" else "Active",
+            expected_value={
+                "cluster": "Available",
+                "node_pool": ("", "Active", "Synchronized"),
+                "node": "Active",
+            }[resource_type],
+            match_mode={
+                "cluster": "equals",
+                "node_pool": "one_of",
+                "node": "equals",
+            }[resource_type],
             timeout_seconds=timeout_seconds,
         )
     )

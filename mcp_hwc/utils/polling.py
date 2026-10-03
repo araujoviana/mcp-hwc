@@ -47,20 +47,28 @@ def parse_path_segments(path: str) -> list[str | int]:
     return segments
 
 
-def extract_path_value(payload: object, path: str) -> object:
+def extract_path_value(payload: object, path: str, *, missing_ok: bool = False) -> object:
     current = payload
     for segment in parse_path_segments(path):
         if isinstance(segment, int):
             if not isinstance(current, list):
+                if missing_ok and current is None:
+                    return None
                 raise HelperToolError(f"response_path segment [{segment}] requires a list value")
             if segment >= len(current):
+                if missing_ok:
+                    return None
                 raise HelperToolError(f"response_path index [{segment}] is out of range")
             current = current[segment]
             continue
 
         if not isinstance(current, dict):
+            if missing_ok and current is None:
+                return None
             raise HelperToolError(f"response_path segment '{segment}' requires an object value")
         if segment not in current:
+            if missing_ok:
+                return None
             raise HelperToolError(f"response_path segment '{segment}' was not found")
         current = current[segment]
 
@@ -77,6 +85,12 @@ def wait_condition_matches(
         return bool(value)
     if match_mode == "equals":
         return value == expected_value
+    if match_mode == "one_of":
+        if not isinstance(expected_value, (list, tuple, set, frozenset)):
+            raise ValueError("one_of match_mode requires a sequence expected_value")
+        return value in expected_value
+    if match_mode == "empty":
+        return value is None or value == "" or value == [] or value == {}
     if match_mode == "contains":
         if isinstance(value, str):
             return isinstance(expected_value, str) and expected_value in value
@@ -85,7 +99,7 @@ def wait_condition_matches(
         if isinstance(value, dict):
             return isinstance(expected_value, str) and expected_value in value
         raise ValueError("contains match_mode only supports string, list, or object values")
-    raise ValueError("match_mode must be one of: equals, contains, truthy")
+    raise ValueError("match_mode must be one of: equals, contains, empty, truthy")
 
 
 def resolve_poll_interval(interval_seconds: int) -> int:
@@ -123,7 +137,7 @@ def wait_for_service_value(
 
     while True:
         result = service.call_operation(operation, parameters)
-        value = extract_path_value(result, response_path)
+        value = extract_path_value(result, response_path, missing_ok=True)
         if wait_condition_matches(
             value,
             expected_value=expected_value,

@@ -45,7 +45,7 @@ def get_quote_store() -> QuoteStore:
     return QuoteStore()
 
 
-@lru_cache(maxsize=None)
+@lru_cache(maxsize=128)
 def get_sdk_service(
     service_name: str,
     api_version: str | None = None,
