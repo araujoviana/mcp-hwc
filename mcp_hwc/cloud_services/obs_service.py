@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
+from urllib.parse import unquote
 
 from obs import ObsClient
 
@@ -165,9 +166,10 @@ class ObsService:
         objects = []
         for content in getattr(body, "contents", []) or []:
             owner = _get_attr(content, "owner")
+            key = _get_attr(content, "key")
             objects.append(
                 {
-                    "key": _get_attr(content, "key"),
+                    "key": unquote(key) if key is not None else None,
                     "size": _get_attr(content, "size"),
                     "etag": _get_attr(content, "etag"),
                     "last_modified": _get_attr(content, "lastModified", "last_modified"),
@@ -177,21 +179,24 @@ class ObsService:
                 }
             )
 
-        common_prefixes = [
-            _get_attr(prefix_item, "prefix")
-            for prefix_item in getattr(body, "commonPrefixs", []) or []
-        ]
+        common_prefixes = []
+        for prefix_item in getattr(body, "commonPrefixs", []) or []:
+            cp = _get_attr(prefix_item, "prefix")
+            common_prefixes.append(unquote(cp) if cp is not None else None)
+
+        prefix = _get_attr(body, "prefix")
+        next_marker = _get_attr(body, "next_marker", "nextMarker")
 
         return {
             "bucket": _get_attr(body, "name", default=bucket_name),
             "region": resolved_region,
             "endpoint": endpoint,
             "location": _get_attr(body, "location", default=resolved_region),
-            "prefix": _get_attr(body, "prefix"),
+            "prefix": unquote(prefix) if prefix is not None else None,
             "marker": _get_attr(body, "marker"),
             "max_keys": _get_attr(body, "max_keys", "maxKeys", default=max_keys),
             "is_truncated": _get_attr(body, "is_truncated", "isTruncated", default=False),
-            "next_marker": _get_attr(body, "next_marker", "nextMarker"),
+            "next_marker": unquote(next_marker) if next_marker is not None else None,
             "common_prefixes": common_prefixes,
             "objects": objects,
         }

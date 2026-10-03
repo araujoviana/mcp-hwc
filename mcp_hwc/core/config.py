@@ -234,10 +234,14 @@ def _first_present(env_values: dict[str, str], *names: str) -> str | None:
     for name in names:
         value = os.getenv(name)
         if value:
-            return value
+            value = value.strip()
+            if value:
+                return value
         value = env_values.get(name)
         if value:
-            return value
+            value = value.strip()
+            if value:
+                return value
     return None
 
 

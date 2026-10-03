@@ -2936,12 +2936,13 @@ def format_list_as_markdown_table(
         if seq_items:
             width = max(len(row) for row in seq_items)
             cols = list(columns) if columns else [f"col{i + 1}" for i in range(width)]
-            header = "| " + " | ".join(cols) + " |"
+            display_cols = [str(c).replace("|", "\\|") for c in cols]
+            header = "| " + " | ".join(display_cols) + " |"
             separator = "| " + " | ".join(["---"] * len(cols)) + " |"
             body = [
                 "| "
                 + " | ".join(
-                    str(row[i]).replace("\n", " ") if i < len(row) else ""
+                    str(row[i]).replace("\n", " ").replace("|", "\\|") if i < len(row) else ""
                     for i in range(len(cols))
                 )
                 + " |"
@@ -2955,7 +2956,8 @@ def format_list_as_markdown_table(
     else:
         cols = list(columns)
 
-    header = "| " + " | ".join(cols) + " |"
+    display_cols = [str(c).replace("|", "\\|") for c in cols]
+    header = "| " + " | ".join(display_cols) + " |"
     separator = "| " + " | ".join(["---"] * len(cols)) + " |"
     rows = []
     for item in dict_items:
@@ -2968,6 +2970,7 @@ def format_list_as_markdown_table(
                     val_str = val_str[:27] + "..."
             else:
                 val_str = str(val).replace("\n", " ")
+            val_str = val_str.replace("|", "\\|")
             row_vals.append(val_str)
         rows.append("| " + " | ".join(row_vals) + " |")
 

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 import posixpath
 import socket
+import uuid
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Protocol
 
@@ -160,6 +162,7 @@ class SshService:
     ) -> dict[str, object]:
         resolved_local_path = _resolve_local_output_path(local_path)
         resolved_local_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_local_path = resolved_local_path.with_name(f"{resolved_local_path.name}.{uuid.uuid4().hex}.tmp")
         client = self._connect(
             host=host,
             username=username,
@@ -172,8 +175,14 @@ class SshService:
         sftp = None
         try:
             sftp = client.open_sftp()
-            sftp.get(remote_path, str(resolved_local_path))
+            sftp.get(remote_path, str(temp_local_path))
+            os.replace(str(temp_local_path), str(resolved_local_path))
         except (paramiko.AuthenticationException, paramiko.SSHException, OSError) as exc:
+            if temp_local_path.exists():
+                try:
+                    temp_local_path.unlink()
+                except OSError:
+                    pass
             raise SshServiceError(
                 f"Failed to download file from {username}@{host}:{port}:{remote_path}: {exc}"
             ) from exc

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,9 +41,9 @@ def spool_rows_if_large(
 
     if not bucket_name or obs_service_factory is None:
         if allow_local_spool:
-            spool_dir = Path("/tmp/mcp-hwc-spool")
+            spool_dir = Path(tempfile.gettempdir()) / "mcp-hwc-spool"
             spool_dir.mkdir(parents=True, exist_ok=True)
-            local_path = spool_dir / f"{source}-{uuid.uuid4().hex[:8]}.json"
+            local_path = spool_dir / f"{source}-{uuid.uuid4().hex}.json"
             local_path.write_text(
                 json.dumps(list(rows), ensure_ascii=False, default=str), encoding="utf-8"
             )
