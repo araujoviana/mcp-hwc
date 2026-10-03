@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from pathlib import Path
 from typing import Any
@@ -17,34 +18,49 @@ class QuoteStore:
 
     def save(self, result: QuoteResult) -> Path:
         path = self._dir / f"{result.quote_id}.json"
-        path.write_text(json.dumps(result.to_dict(), indent=2), encoding="utf-8")
+        temp_path = self._dir / f"{result.quote_id}.tmp"
+        temp_path.write_text(json.dumps(result.to_dict(), indent=2), encoding="utf-8")
+        os.replace(temp_path, path)
+        os.chmod(path, 0o600)
         return path
 
     def get(self, quote_id: uuid.UUID) -> QuoteResult:
         path = self._dir / f"{quote_id}.json"
         if not path.exists():
             raise FileNotFoundError(f"Quote {quote_id} not found")
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return self._from_dict(data)
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return self._from_dict(data)
+        except (json.JSONDecodeError, KeyError, ValueError) as e:
+            raise ValueError(f"Invalid quote at {path}: {e}") from e
 
     def list_quotes(self, limit: int = 20, service: str | None = None) -> list[dict[str, Any]]:
-        files = sorted(self._dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        def _safe_mtime(p: Path) -> float:
+            try:
+                return p.stat().st_mtime
+            except OSError:
+                return 0.0
+
+        files = sorted(self._dir.glob("*.json"), key=_safe_mtime, reverse=True)
         summaries: list[dict[str, Any]] = []
         for f in files:
-            data = json.loads(f.read_text(encoding="utf-8"))
-            services = list({item["service"] for item in data.get("items", [])})
-            if service and service.lower() not in [s.lower() for s in services]:
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+                services = list({item["service"] for item in data.get("items", [])})
+                if service and service.lower() not in [s.lower() for s in services]:
+                    continue
+                summaries.append(
+                    {
+                        "quote_id": data["quote_id"],
+                        "services": services,
+                        "total_monthly": data.get("total_monthly"),
+                        "total_annual": data.get("total_annual"),
+                        "currency": data.get("currency", "USD"),
+                        "created_at": data.get("created_at"),
+                    }
+                )
+            except (json.JSONDecodeError, KeyError, OSError):
                 continue
-            summaries.append(
-                {
-                    "quote_id": data["quote_id"],
-                    "services": services,
-                    "total_monthly": data.get("total_monthly"),
-                    "total_annual": data.get("total_annual"),
-                    "currency": data.get("currency", "USD"),
-                    "created_at": data.get("created_at"),
-                }
-            )
             if len(summaries) >= limit:
                 break
         return summaries

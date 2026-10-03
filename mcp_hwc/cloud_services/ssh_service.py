@@ -61,7 +61,7 @@ class SshService:
         port: int = 22,
         password: str | None = None,
         private_key_path: str | None = None,
-        allow_unknown_host: bool = True,
+        allow_unknown_host: bool = False,
         connect_timeout: int = 20,
         command_timeout: int = 300,
     ) -> dict[str, object]:
@@ -76,9 +76,9 @@ class SshService:
         )
         try:
             _, stdout, stderr = client.exec_command(command, timeout=command_timeout)
-            exit_status = stdout.channel.recv_exit_status()
             stdout_text = stdout.read().decode("utf-8", errors="replace")
             stderr_text = stderr.read().decode("utf-8", errors="replace")
+            exit_status = stdout.channel.recv_exit_status()
         except (socket.timeout, TimeoutError) as exc:
             raise SshServiceError(
                 f"Timed out while executing SSH command on {username}@{host}:{port}"
@@ -109,7 +109,7 @@ class SshService:
         port: int = 22,
         password: str | None = None,
         private_key_path: str | None = None,
-        allow_unknown_host: bool = True,
+        allow_unknown_host: bool = False,
         connect_timeout: int = 20,
     ) -> dict[str, object]:
         resolved_local_path = _resolve_existing_local_path(local_path)
@@ -155,7 +155,7 @@ class SshService:
         port: int = 22,
         password: str | None = None,
         private_key_path: str | None = None,
-        allow_unknown_host: bool = True,
+        allow_unknown_host: bool = False,
         connect_timeout: int = 20,
     ) -> dict[str, object]:
         resolved_local_path = _resolve_local_output_path(local_path)

@@ -20,7 +20,7 @@ class EcsCreateSchema(BaseModel):
         description="The administrator password for the ECS instance. Must meet complexity requirements (uppercase, lowercase, digit, special).",
     )
     return_password: bool = Field(
-        True, description="Whether to return the generated password in the response."
+        False, description="Whether to return the generated password in the response."
     )
     vpc_id: Optional[str] = Field(
         None,

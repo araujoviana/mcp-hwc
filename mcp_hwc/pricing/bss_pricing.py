@@ -286,24 +286,33 @@ class BssPricingBackend:
         from huaweicloudsdkbss.v2.model import ListServiceResourcesRequest
 
         service_type_code = resolve_cloud_service_type(service)
-        request = ListServiceResourcesRequest(
-            service_type_code=service_type_code,
-            limit=100,
-            offset=0,
-        )
-        response = self._call_api(self._get_client().list_service_resources, request)
-
+        limit = 100
+        offset = 0
         resources = []
-        for item in response.service_resources or []:
-            entry = {
-                "resource_type": item.resource_type or "",
-                "resource_spec": item.resource_spec or "",
-                "resource_spec_desc": item.resource_spec_desc or "",
-            }
-            if keyword and keyword.lower() not in entry["resource_spec_desc"].lower():
-                if keyword.lower() not in entry["resource_spec"].lower():
-                    continue
-            resources.append(entry)
+
+        while True:
+            request = ListServiceResourcesRequest(
+                service_type_code=service_type_code,
+                limit=limit,
+                offset=offset,
+            )
+            response = self._call_api(self._get_client().list_service_resources, request)
+
+            items = response.service_resources or []
+            for item in items:
+                entry = {
+                    "resource_type": item.resource_type or "",
+                    "resource_spec": item.resource_spec or "",
+                    "resource_spec_desc": item.resource_spec_desc or "",
+                }
+                if keyword and keyword.lower() not in entry["resource_spec_desc"].lower():
+                    if keyword.lower() not in entry["resource_spec"].lower():
+                        continue
+                resources.append(entry)
+
+            if len(items) < limit:
+                break
+            offset += len(items)
 
         return resources
 
@@ -313,7 +322,7 @@ class BssPricingBackend:
             return fn(request)
         except Exception as exc:
             msg = str(exc)
-            if "CBC.0156" in msg or "403" in msg:
+            if "CBC.0156" in msg:
                 raise BssAccessDenied(
                     "BSS API access denied (CBC.0156). "
                     "The account may not have the BSS pricing API enabled."

@@ -29,7 +29,7 @@ def create_ecs_vm(
     public_access: bool = True,
     ssh_cidr: str | None = None,
     admin_password: str | None = None,
-    return_password: bool = True,
+    return_password: bool = False,
     vpc_id: str | None = None,
     subnet_id: str | None = None,
     security_group_id: str | None = None,

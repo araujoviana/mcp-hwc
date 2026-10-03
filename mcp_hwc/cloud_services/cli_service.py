@@ -1,3 +1,4 @@
+import os
 import re
 import shutil
 import subprocess
@@ -187,7 +188,7 @@ class CliService:
                 capture_output=True,
                 check=False,
                 cwd=cwd,
-                env=dict(env) if env else None,
+                env={**os.environ, **env} if env else None,
             )
         except OSError as exc:
             sanitized_cmd = _sanitize_command(command)

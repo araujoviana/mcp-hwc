@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import os
 import shutil
 import subprocess
 from urllib.parse import urlparse
@@ -40,6 +41,11 @@ def decode_swr_auth(auth_token: str) -> tuple[str, str]:
 
 
 def resolve_container_cli(preferred_cli: str | None) -> str:
+    allowlist = {"docker", "podman", "nerdctl"}
+    if preferred_cli and os.path.basename(preferred_cli) not in allowlist:
+        raise HelperToolError(
+            f"Invalid container CLI: {preferred_cli}. Allowed CLIs: docker, podman, nerdctl."
+        )
     candidates = [preferred_cli] if preferred_cli else ["docker", "podman", "nerdctl"]
     for candidate in candidates:
         if candidate and shutil.which(candidate):

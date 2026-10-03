@@ -954,7 +954,7 @@ def ecs_create_vm(
     public_access: bool = True,
     ssh_cidr: str | None = None,
     admin_password: str | None = None,
-    return_password: bool = True,
+    return_password: bool = False,
     vpc_id: str | None = None,
     subnet_id: str | None = None,
     security_group_id: str | None = None,
@@ -1148,7 +1148,7 @@ def ssh_execute(
     port: int = 22,
     password: str | None = None,
     private_key_path: str | None = None,
-    allow_unknown_host: bool = True,
+    allow_unknown_host: bool = False,
     connect_timeout: int = 20,
     command_timeout: int = 300,
 ) -> dict[str, object]:
@@ -1177,7 +1177,7 @@ def ssh_upload_file(
     port: int = 22,
     password: str | None = None,
     private_key_path: str | None = None,
-    allow_unknown_host: bool = True,
+    allow_unknown_host: bool = False,
     connect_timeout: int = 20,
 ) -> dict[str, object]:
     """Upload a local file to an SSH-accessible host using SFTP."""
@@ -1205,7 +1205,7 @@ def ssh_download_file(
     port: int = 22,
     password: str | None = None,
     private_key_path: str | None = None,
-    allow_unknown_host: bool = True,
+    allow_unknown_host: bool = False,
     connect_timeout: int = 20,
 ) -> dict[str, object]:
     """Download a remote file from an SSH-accessible host using SFTP."""

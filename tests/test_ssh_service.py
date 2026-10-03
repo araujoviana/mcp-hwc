@@ -92,7 +92,7 @@ def test_execute_returns_stdout_and_exit_status() -> None:
     assert result["stdout"] == "nginx installed\n"
     assert result["stderr"] == ""
     assert fake_client.connected_with["hostname"] == "10.0.0.10"
-    assert fake_client.loaded_system_host_keys is False
+    assert fake_client.loaded_system_host_keys is True
 
 
 def test_upload_file_creates_remote_parent_directories(tmp_path: Path) -> None:
