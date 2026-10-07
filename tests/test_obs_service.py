@@ -2,6 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from obs.convertor import Adapter, Convertor
 
 from mcp_hwc.cloud_services.obs_endpoints import OBS_GLOBAL_SERVER, build_obs_server
 from mcp_hwc.cloud_services.obs_service import ObsService, ObsServiceError
@@ -143,6 +144,49 @@ def test_list_objects_auto_resolves_bucket_region() -> None:
             "owner_name": "demo",
         }
     ]
+
+
+_LIST_OBJECTS_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<ListBucketResult>
+  <Name>demo-bucket</Name>
+  <EncodingType>url</EncodingType>
+  <Prefix>dir%2F</Prefix>
+  <Marker></Marker>
+  <NextMarker>dir%2Fa%2541.txt</NextMarker>
+  <MaxKeys>100</MaxKeys>
+  <IsTruncated>true</IsTruncated>
+  <Contents>
+    <Key>report%2520final.txt</Key>
+    <LastModified>2026-01-01T00:00:00.000Z</LastModified>
+    <ETag>"etag-1"</ETag>
+    <Size>7</Size>
+    <StorageClass>STANDARD</StorageClass>
+  </Contents>
+  <CommonPrefixes><Prefix>dir%2Fx%2520y%2F</Prefix></CommonPrefixes>
+</ListBucketResult>"""
+
+
+def test_list_objects_does_not_double_decode_keys_decoded_by_sdk() -> None:
+    # Drive the real SDK parser: it already url-decodes when EncodingType=url.
+    parsed = Convertor("v2", Adapter("v2")).parseListObjects(_LIST_OBJECTS_XML, {})
+    assert parsed.contents[0].key == "report%20final.txt"
+
+    regional_server = build_obs_server("ap-southeast-1")
+    factory = FakeClientFactory(
+        {
+            regional_server: SimpleNamespace(
+                listObjects=lambda bucketName, **kwargs: make_response(200, parsed),
+            )
+        }
+    )
+    service = ObsService(make_config(), client_factory=factory)
+
+    result = service.list_objects("demo-bucket", region="ap-southeast-1")
+
+    assert [o["key"] for o in result["objects"]] == ["report%20final.txt"]
+    assert result["common_prefixes"] == ["dir/x%20y/"]
+    assert result["prefix"] == "dir/"
+    assert result["next_marker"] == "dir/a%41.txt"
 
 
 def test_create_bucket_uses_target_region() -> None:

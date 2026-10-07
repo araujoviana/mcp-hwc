@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
-from urllib.parse import unquote
 
 from obs import ObsClient
 
@@ -169,7 +168,7 @@ class ObsService:
             key = _get_attr(content, "key")
             objects.append(
                 {
-                    "key": unquote(key) if key is not None else None,
+                    "key": key,
                     "size": _get_attr(content, "size"),
                     "etag": _get_attr(content, "etag"),
                     "last_modified": _get_attr(content, "lastModified", "last_modified"),
@@ -182,7 +181,7 @@ class ObsService:
         common_prefixes = []
         for prefix_item in getattr(body, "commonPrefixs", []) or []:
             cp = _get_attr(prefix_item, "prefix")
-            common_prefixes.append(unquote(cp) if cp is not None else None)
+            common_prefixes.append(cp)
 
         prefix = _get_attr(body, "prefix")
         next_marker = _get_attr(body, "next_marker", "nextMarker")
@@ -192,11 +191,11 @@ class ObsService:
             "region": resolved_region,
             "endpoint": endpoint,
             "location": _get_attr(body, "location", default=resolved_region),
-            "prefix": unquote(prefix) if prefix is not None else None,
+            "prefix": prefix,
             "marker": _get_attr(body, "marker"),
             "max_keys": _get_attr(body, "max_keys", "maxKeys", default=max_keys),
             "is_truncated": _get_attr(body, "is_truncated", "isTruncated", default=False),
-            "next_marker": unquote(next_marker) if next_marker is not None else None,
+            "next_marker": next_marker,
             "common_prefixes": common_prefixes,
             "objects": objects,
         }
