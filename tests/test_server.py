@@ -1399,3 +1399,51 @@ async def test_mcp_session_can_call_ssh_tool(monkeypatch: pytest.MonkeyPatch) ->
 
     assert result.isError is False
     assert result.structuredContent["exit_status"] == 0
+
+
+_FULL_RESULT = {
+    "service": "vpc",
+    "display_name": "VPC",
+    "implementation": "vpc",
+    "sdk_package_root": "huaweicloudsdkvpc",
+    "api_version": "v2",
+    "available_api_versions": ["v2"],
+    "operation": "list_vpcs",
+    "credential_scope": "basic",
+    "region": "ap-southeast-1",
+    "endpoint": "https://vpc.example.com",
+    "response": {"vpcs": [{"id": "1", "description": None}]},
+}
+
+
+class _FullEnvelopeService:
+    def call_operation(self, operation, parameters=None, fields=None):
+        return dict(_FULL_RESULT)
+
+
+def test_generic_call_operation_returns_slim_envelope_by_default(monkeypatch) -> None:
+    monkeypatch.setattr(server, "_get_resolved_sdk_service", lambda *a, **k: _FullEnvelopeService())
+
+    result = server.huaweicloud_call_operation(service_name="vpc", operation="list_vpcs")
+
+    assert set(result) == {"service", "operation", "region", "response"}
+    assert result["response"] == {"vpcs": [{"id": "1"}]}
+
+
+def test_generic_call_operation_verbose_returns_full_envelope(monkeypatch) -> None:
+    monkeypatch.setattr(server, "_get_resolved_sdk_service", lambda *a, **k: _FullEnvelopeService())
+
+    result = server.huaweicloud_call_operation(
+        service_name="vpc", operation="list_vpcs", verbose=True
+    )
+
+    assert result == _FULL_RESULT
+
+
+def test_generated_call_operation_returns_slim_envelope(monkeypatch) -> None:
+    monkeypatch.setattr(server, "get_vpc_service", lambda *a, **k: _FullEnvelopeService())
+
+    result = server.vpc_call_operation(operation="list_vpcs")
+
+    assert "endpoint" not in result
+    assert result["response"] == {"vpcs": [{"id": "1"}]}

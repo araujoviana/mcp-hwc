@@ -71,6 +71,7 @@ from mcp_hwc.cloud_services.ssh_service import SshService, SshServiceError
 from mcp_hwc.core.config import CloudApiConfig, ConfigError, ObsConfig
 from mcp_hwc.core.defaults import resolve_service_defaults
 from mcp_hwc.core.errors import HelperToolError
+from mcp_hwc.core.response_compaction import DEFAULT_MAX_ITEMS, slim_call_result
 from mcp_hwc.core.result_spooling import DEFAULT_SPOOL_ROW_THRESHOLD
 from mcp_hwc.core.sdk_service import (
     SERVICE_SPECS,
@@ -677,11 +678,16 @@ def huaweicloud_call_operation(
     wait_for_completion: bool = False,
     timeout_seconds: int = 1200,
     fields: list[str] | None = None,
+    verbose: bool = False,
+    max_items: int = DEFAULT_MAX_ITEMS,
 ) -> dict[str, object]:
     """Execute any supported Huawei Cloud SDK operation using a service name or alias.
 
     Pass `fields` (e.g. ["id", "name", "status"]) to project the response down to just
-    those keys, cutting response size for large list/show operations."""
+    those keys, cutting response size for large list/show operations.
+    By default the result is slimmed: envelope metadata is dropped, null/empty values are
+    stripped, and lists are capped at `max_items` (0 = no cap) with a `_truncated` hint.
+    Pass `verbose=True` for the full unmodified result."""
 
     def call_and_maybe_wait() -> dict[str, object]:
         resolved_service = _get_resolved_sdk_service(
@@ -699,13 +705,13 @@ def huaweicloud_call_operation(
         )
 
         if not wait_for_completion:
-            return result
+            return slim_call_result(result, verbose=verbose, max_items=max_items)
 
         response_body = result.get("response") or {}
         job_id = response_body.get("job_id") or response_body.get("jobId")
 
         if not job_id:
-            return result
+            return slim_call_result(result, verbose=verbose, max_items=max_items)
 
         return _wait_for_service_value(
             resolved_service,
@@ -1311,19 +1317,25 @@ def _register_sdk_tools(service_name: str) -> None:
         endpoint: str | None = None,
         api_version: str | None = None,
         fields: list[str] | None = None,
+        verbose: bool = False,
+        max_items: int = DEFAULT_MAX_ITEMS,
     ) -> dict[str, object]:
         getter = globals()[getter_name]
         return _run_tool_call(
-            lambda: getter(
-                region=_resolve_sdk_region(region, parameters, endpoint),
-                project_id=project_id,
-                domain_id=domain_id,
-                endpoint=endpoint,
-                api_version=api_version,
-            ).call_operation(
-                operation=operation,
-                parameters=parameters,
-                fields=fields,
+            lambda: slim_call_result(
+                getter(
+                    region=_resolve_sdk_region(region, parameters, endpoint),
+                    project_id=project_id,
+                    domain_id=domain_id,
+                    endpoint=endpoint,
+                    api_version=api_version,
+                ).call_operation(
+                    operation=operation,
+                    parameters=parameters,
+                    fields=fields,
+                ),
+                verbose=verbose,
+                max_items=max_items,
             )
         )
 
