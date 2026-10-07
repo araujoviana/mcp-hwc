@@ -1001,7 +1001,11 @@ def ecs_create_vm(
     bandwidth_size_mbit: int = 5,
     wait: bool = False,
 ) -> dict[str, object]:
-    """Create a small ECS VM from minimal input and hide routine SDK payload details."""
+    """Create a small ECS VM from minimal input and hide routine SDK payload details.
+
+    To SSH in later, pass admin_password (and reuse it as password for ssh_*) or
+    return_password=true; otherwise the generated password is discarded.
+    """
     return _run_tool_call(
         lambda: _create_ecs_vm_workflow(
             service_factory=_get_resolved_sdk_service,

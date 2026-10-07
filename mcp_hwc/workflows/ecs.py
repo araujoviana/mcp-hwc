@@ -161,6 +161,14 @@ def create_ecs_vm(
     }
     if return_password:
         result["login"]["password"] = resolved_password
+    elif not admin_password:
+        result["next_steps"].append(
+            "The generated root password was discarded, so SSH login will not work with it. "
+            "To regain access, call huaweicloud_call_operation with service=ecs, "
+            "operation=reset_server_password, server_id=<server id> and "
+            "body.reset_password.new_password=<new password>, then reuse that password "
+            "in the ssh_* tools."
+        )
     if resolved_ssh_cidr == "0.0.0.0/0":
         result["warnings"] = [
             "SSH is open to 0.0.0.0/0 because ssh_cidr was not provided. Restrict it when possible."
