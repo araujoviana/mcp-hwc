@@ -7,6 +7,7 @@ import pytest
 from mcp_hwc.cloud_services.ssh_service import (
     SshService,
     SshServiceError,
+    _load_system_host_keys_safely,
     _prepare_known_hosts_file,
 )
 
@@ -264,3 +265,55 @@ def test_prepare_known_hosts_default_location_tightens_dir_and_file(monkeypatch,
 
     assert oct(state.stat().st_mode & 0o777) == "0o700"
     assert oct(known_hosts.stat().st_mode & 0o777) == "0o600"
+
+
+_CONNECT_KWARGS = dict(
+    host="203.0.113.10",
+    username="root",
+    port=22,
+    password="pw",
+    private_key_path=None,
+    allow_unknown_host=False,
+    connect_timeout=5,
+)
+
+
+def test_connect_survives_invalid_system_known_hosts(monkeypatch, tmp_path) -> None:
+    service, client, known_hosts = _service_with_fake(monkeypatch, tmp_path)
+
+    def bad_system_keys() -> None:
+        raise paramiko.hostkeys.InvalidHostKey("bad", Exception("x"))
+
+    client.load_system_host_keys = bad_system_keys
+
+    assert service._connect(**_CONNECT_KWARGS) is client
+    assert client.connected_with is not None
+    assert client.loaded_host_keys == str(known_hosts)
+    assert client.closed is False
+
+
+def test_connect_reports_invalid_mcp_hwc_known_hosts_file(monkeypatch, tmp_path) -> None:
+    service, client, known_hosts = _service_with_fake(monkeypatch, tmp_path)
+
+    def bad_host_keys(filename: str) -> None:
+        raise paramiko.hostkeys.InvalidHostKey("bad", Exception("x"))
+
+    client.load_host_keys = bad_host_keys
+
+    with pytest.raises(SshServiceError) as excinfo:
+        service._connect(**_CONNECT_KWARGS)
+    assert str(known_hosts) in str(excinfo.value)
+    assert "Fix or delete" in str(excinfo.value)
+    assert client.closed is True
+
+
+def test_load_system_host_keys_safely_with_real_paramiko_cert_authority(tmp_path) -> None:
+    path = tmp_path / "known_hosts"
+    path.write_text("@cert-authority *.example.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAAAgQC0\n")
+    client = paramiko.SSHClient()
+
+    # Confirm the premise: paramiko itself rejects this line.
+    with pytest.raises(paramiko.hostkeys.InvalidHostKey):
+        paramiko.SSHClient().load_system_host_keys(str(path))
+
+    _load_system_host_keys_safely(client, str(path))

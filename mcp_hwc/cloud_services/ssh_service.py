@@ -229,8 +229,15 @@ class SshService:
             # System keys catch a changed key for hosts the user already trusts.
             # The mcp-hwc file is bound to the client, so AutoAddPolicy persists
             # newly seen keys there (trust on first use); RejectPolicy never adds.
-            client.load_system_host_keys()
-            client.load_host_keys(_prepare_known_hosts_file())
+            _load_system_host_keys_safely(client)
+            known_hosts_file = _prepare_known_hosts_file()
+            try:
+                client.load_host_keys(known_hosts_file)
+            except paramiko.hostkeys.InvalidHostKey as exc:
+                raise SshServiceError(
+                    f"The mcp-hwc known_hosts file {known_hosts_file} contains an invalid "
+                    f"entry ({exc}). Fix or delete that file and try again."
+                ) from exc
             policy = paramiko.AutoAddPolicy() if allow_unknown_host else paramiko.RejectPolicy()
             client.set_missing_host_key_policy(policy)
             client.connect(
@@ -245,6 +252,9 @@ class SshService:
                 allow_agent=True,
                 look_for_keys=True,
             )
+        except SshServiceError:
+            _close_quietly(client)
+            raise
         except (paramiko.AuthenticationException, paramiko.SSHException, OSError) as exc:
             _close_quietly(client)
             raise SshServiceError(
@@ -299,6 +309,20 @@ def _known_hosts_path() -> Path:
     if override:
         return Path(override).expanduser()
     return Path.home() / ".mcp-hwc" / "known_hosts"
+
+
+def _load_system_host_keys_safely(client: Any, filename: str | None = None) -> None:
+    # paramiko raises InvalidHostKey (not an SSHException) for @cert-authority,
+    # @revoked and malformed lines in the user's ~/.ssh/known_hosts. Skip the
+    # system keys rather than fail every connection; the mcp-hwc file is still
+    # loaded afterwards and strict mode still uses RejectPolicy.
+    try:
+        if filename is None:
+            client.load_system_host_keys()
+        else:
+            client.load_system_host_keys(filename)
+    except (paramiko.hostkeys.InvalidHostKey, OSError):
+        pass
 
 
 def _prepare_known_hosts_file() -> str:
