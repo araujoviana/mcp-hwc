@@ -4,7 +4,11 @@ from types import SimpleNamespace
 import paramiko
 import pytest
 
-from mcp_hwc.cloud_services.ssh_service import SshService
+from mcp_hwc.cloud_services.ssh_service import (
+    SshService,
+    SshServiceError,
+    _prepare_known_hosts_file,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -205,3 +209,58 @@ def test_autoadd_policy_persists_key_so_later_strict_connects_trust_it(tmp_path)
 
     other_key = paramiko.ECDSAKey.generate()
     assert not stored.check("203.0.113.10", other_key)
+
+
+@pytest.mark.parametrize("allow", [True, False])
+def test_connect_rejects_changed_host_key_and_closes_client(monkeypatch, tmp_path, allow) -> None:
+    service, client, _ = _service_with_fake(monkeypatch, tmp_path)
+
+    def raise_bad_key(*args, **kwargs) -> None:
+        raise paramiko.BadHostKeyException(
+            "203.0.113.10", paramiko.ECDSAKey.generate(), paramiko.ECDSAKey.generate()
+        )
+
+    client.connect = raise_bad_key
+
+    with pytest.raises(SshServiceError):
+        service._connect(
+            host="203.0.113.10",
+            username="root",
+            port=22,
+            password="pw",
+            private_key_path=None,
+            allow_unknown_host=allow,
+            connect_timeout=5,
+        )
+    assert client.closed is True
+
+
+def test_prepare_known_hosts_override_tightens_file_but_not_parent(monkeypatch, tmp_path) -> None:
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    shared.chmod(0o755)
+    known_hosts = shared / "known_hosts"
+    known_hosts.touch()
+    known_hosts.chmod(0o644)
+    monkeypatch.setenv("MCP_HWC_KNOWN_HOSTS", str(known_hosts))
+
+    _prepare_known_hosts_file()
+
+    assert oct(known_hosts.stat().st_mode & 0o777) == "0o600"
+    assert oct(shared.stat().st_mode & 0o777) == "0o755"
+
+
+def test_prepare_known_hosts_default_location_tightens_dir_and_file(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("MCP_HWC_KNOWN_HOSTS", raising=False)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    state = tmp_path / ".mcp-hwc"
+    state.mkdir()
+    state.chmod(0o755)
+    known_hosts = state / "known_hosts"
+    known_hosts.touch()
+    known_hosts.chmod(0o644)
+
+    assert _prepare_known_hosts_file() == str(known_hosts)
+
+    assert oct(state.stat().st_mode & 0o777) == "0o700"
+    assert oct(known_hosts.stat().st_mode & 0o777) == "0o600"

@@ -290,8 +290,12 @@ def _resolve_local_output_path(local_path: str) -> Path:
     return path.resolve()
 
 
+def _known_hosts_override() -> str | None:
+    return os.environ.get("MCP_HWC_KNOWN_HOSTS") or None
+
+
 def _known_hosts_path() -> Path:
-    override = os.environ.get("MCP_HWC_KNOWN_HOSTS")
+    override = _known_hosts_override()
     if override:
         return Path(override).expanduser()
     return Path.home() / ".mcp-hwc" / "known_hosts"
@@ -301,6 +305,12 @@ def _prepare_known_hosts_file() -> str:
     path = _known_hosts_path()
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     path.touch(mode=0o600, exist_ok=True)
+    # Modes passed above only apply on creation; tighten pre-existing paths.
+    # Only chmod the directory when it is our own default (~/.mcp-hwc); a
+    # user-chosen override may live in a shared directory such as /tmp.
+    if _known_hosts_override() is None:
+        os.chmod(path.parent, 0o700)
+    os.chmod(path, 0o600)
     return str(path)
 
 
