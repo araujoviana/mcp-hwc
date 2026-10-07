@@ -214,7 +214,7 @@ def test_autoadd_policy_persists_key_so_later_strict_connects_trust_it(tmp_path)
 
 @pytest.mark.parametrize("allow", [True, False])
 def test_connect_rejects_changed_host_key_and_closes_client(monkeypatch, tmp_path, allow) -> None:
-    service, client, _ = _service_with_fake(monkeypatch, tmp_path)
+    service, client, known_hosts = _service_with_fake(monkeypatch, tmp_path)
 
     def raise_bad_key(*args, **kwargs) -> None:
         raise paramiko.BadHostKeyException(
@@ -223,7 +223,7 @@ def test_connect_rejects_changed_host_key_and_closes_client(monkeypatch, tmp_pat
 
     client.connect = raise_bad_key
 
-    with pytest.raises(SshServiceError):
+    with pytest.raises(SshServiceError) as excinfo:
         service._connect(
             host="203.0.113.10",
             username="root",
@@ -233,6 +233,12 @@ def test_connect_rejects_changed_host_key_and_closes_client(monkeypatch, tmp_pat
             allow_unknown_host=allow,
             connect_timeout=5,
         )
+    message = str(excinfo.value)
+    assert "203.0.113.10" in message
+    assert str(known_hosts) in message
+    assert "~/.ssh/known_hosts" in message
+    assert f"ssh-keygen -R 203.0.113.10 -f {known_hosts}" in message
+    assert "ssh-keygen -R 203.0.113.10 -f ~/.ssh/known_hosts" in message
     assert client.closed is True
 
 

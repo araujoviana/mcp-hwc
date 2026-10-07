@@ -255,6 +255,17 @@ class SshService:
         except SshServiceError:
             _close_quietly(client)
             raise
+        except paramiko.BadHostKeyException as exc:
+            _close_quietly(client)
+            mcp_hwc_file = _known_hosts_path()
+            raise SshServiceError(
+                f"The host key for {resolved_host} does not match the stored key. This may be "
+                "a man-in-the-middle attack, or the server was recreated or its IP address "
+                "was reused. If you trust the new server, remove the old entry from the file "
+                f"that holds it and retry: ssh-keygen -R {resolved_host} -f {mcp_hwc_file} "
+                f"(mcp-hwc file) or ssh-keygen -R {resolved_host} -f ~/.ssh/known_hosts "
+                f"(system file). Details: {exc}"
+            ) from exc
         except (paramiko.AuthenticationException, paramiko.SSHException, OSError) as exc:
             _close_quietly(client)
             raise SshServiceError(
