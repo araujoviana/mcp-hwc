@@ -19,3 +19,6 @@ docs/superpowers/
 .agents/
 opencode.json
 uv.lock
+
+# AI-generated review notes, kept locally
+docs/deep-review-*.md
