@@ -1,7 +1,15 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import paramiko
+import pytest
+
 from mcp_hwc.cloud_services.ssh_service import SshService
+
+
+@pytest.fixture(autouse=True)
+def _isolated_known_hosts(monkeypatch, tmp_path):
+    monkeypatch.setenv("MCP_HWC_KNOWN_HOSTS", str(tmp_path / "auto_known_hosts"))
 
 
 class FakeChannel:
@@ -52,10 +60,14 @@ class FakeSshClient:
         self.sftp_client = sftp_client
         self.closed = False
         self.loaded_system_host_keys = False
+        self.loaded_host_keys: str | None = None
 
     def load_system_host_keys(self) -> None:
         self.loaded_system_host_keys = True
         return None
+
+    def load_host_keys(self, filename: str) -> None:
+        self.loaded_host_keys = filename
 
     def set_missing_host_key_policy(self, policy) -> None:
         self.policy = policy
@@ -148,3 +160,48 @@ def test_execute_loads_known_hosts_when_unknown_hosts_disallowed() -> None:
     )
 
     assert fake_client.loaded_system_host_keys is True
+
+
+def _service_with_fake(monkeypatch, tmp_path):
+    known_hosts = tmp_path / "state" / "known_hosts"
+    monkeypatch.setenv("MCP_HWC_KNOWN_HOSTS", str(known_hosts))
+    client = FakeSshClient(FakeSftpClient())
+    return SshService(client_factory=lambda: client), client, known_hosts
+
+
+def test_connect_loads_and_creates_private_known_hosts_file(monkeypatch, tmp_path) -> None:
+    service, client, known_hosts = _service_with_fake(monkeypatch, tmp_path)
+
+    for allow in (True, False):
+        service._connect(
+            host="203.0.113.10",
+            username="root",
+            port=22,
+            password="pw",
+            private_key_path=None,
+            allow_unknown_host=allow,
+            connect_timeout=5,
+        )
+        assert client.loaded_host_keys == str(known_hosts)
+        assert client.loaded_system_host_keys is True
+
+    assert known_hosts.exists()
+    assert oct(known_hosts.stat().st_mode & 0o777) == "0o600"
+    assert oct(known_hosts.parent.stat().st_mode & 0o777) == "0o700"
+
+
+def test_autoadd_policy_persists_key_so_later_strict_connects_trust_it(tmp_path) -> None:
+    path = tmp_path / "known_hosts"
+    path.touch()
+    key = paramiko.ECDSAKey.generate()
+
+    first = paramiko.SSHClient()
+    first.load_host_keys(str(path))
+    first._transport = SimpleNamespace(_log=lambda *args: None)  # missing_host_key logs via it
+    paramiko.AutoAddPolicy().missing_host_key(first, "203.0.113.10", key)
+
+    stored = paramiko.HostKeys(str(path))
+    assert stored.check("203.0.113.10", key)
+
+    other_key = paramiko.ECDSAKey.generate()
+    assert not stored.check("203.0.113.10", other_key)

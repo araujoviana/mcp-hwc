@@ -35,6 +35,8 @@ class _SftpClient(Protocol):
 class _SshClient(Protocol):
     def load_system_host_keys(self) -> None: ...
 
+    def load_host_keys(self, filename: str) -> None: ...
+
     def set_missing_host_key_policy(self, policy: Any) -> None: ...
 
     def connect(self, *args: Any, **kwargs: Any) -> None: ...
@@ -224,8 +226,11 @@ class SshService:
 
         client = self._client_factory()
         try:
-            if not allow_unknown_host:
-                client.load_system_host_keys()
+            # System keys catch a changed key for hosts the user already trusts.
+            # The mcp-hwc file is bound to the client, so AutoAddPolicy persists
+            # newly seen keys there (trust on first use); RejectPolicy never adds.
+            client.load_system_host_keys()
+            client.load_host_keys(_prepare_known_hosts_file())
             policy = paramiko.AutoAddPolicy() if allow_unknown_host else paramiko.RejectPolicy()
             client.set_missing_host_key_policy(policy)
             client.connect(
@@ -283,6 +288,20 @@ def _resolve_local_output_path(local_path: str) -> Path:
     if not path.is_absolute():
         path = Path.cwd() / path
     return path.resolve()
+
+
+def _known_hosts_path() -> Path:
+    override = os.environ.get("MCP_HWC_KNOWN_HOSTS")
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".mcp-hwc" / "known_hosts"
+
+
+def _prepare_known_hosts_file() -> str:
+    path = _known_hosts_path()
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path.touch(mode=0o600, exist_ok=True)
+    return str(path)
 
 
 def _resolve_private_key_path(private_key_path: str | None) -> str | None:

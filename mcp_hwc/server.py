@@ -1181,11 +1181,16 @@ def ssh_execute(
     port: int = 22,
     password: str | None = None,
     private_key_path: str | None = None,
-    allow_unknown_host: bool = False,
+    allow_unknown_host: bool = True,
     connect_timeout: int = 20,
     command_timeout: int = 300,
 ) -> dict[str, object]:
-    """Run a shell command on an SSH-accessible host."""
+    """Run a shell command on an SSH-accessible host.
+
+    First contact with a host trusts and pins its key in ~/.mcp-hwc/known_hosts (set
+    MCP_HWC_KNOWN_HOSTS to relocate); a later key change is rejected. Pass
+    allow_unknown_host=False to refuse hosts that are not already trusted.
+    """
     return _run_tool_call(
         lambda: get_ssh_service().execute(
             host=host,
@@ -1210,10 +1215,15 @@ def ssh_upload_file(
     port: int = 22,
     password: str | None = None,
     private_key_path: str | None = None,
-    allow_unknown_host: bool = False,
+    allow_unknown_host: bool = True,
     connect_timeout: int = 20,
 ) -> dict[str, object]:
-    """Upload a local file to an SSH-accessible host using SFTP."""
+    """Upload a local file to an SSH-accessible host using SFTP.
+
+    First contact with a host trusts and pins its key in ~/.mcp-hwc/known_hosts (set
+    MCP_HWC_KNOWN_HOSTS to relocate); a later key change is rejected. Pass
+    allow_unknown_host=False to refuse hosts that are not already trusted.
+    """
     return _run_tool_call(
         lambda: get_ssh_service().upload_file(
             host=host,
@@ -1238,10 +1248,15 @@ def ssh_download_file(
     port: int = 22,
     password: str | None = None,
     private_key_path: str | None = None,
-    allow_unknown_host: bool = False,
+    allow_unknown_host: bool = True,
     connect_timeout: int = 20,
 ) -> dict[str, object]:
-    """Download a remote file from an SSH-accessible host using SFTP."""
+    """Download a remote file from an SSH-accessible host using SFTP.
+
+    First contact with a host trusts and pins its key in ~/.mcp-hwc/known_hosts (set
+    MCP_HWC_KNOWN_HOSTS to relocate); a later key change is rejected. Pass
+    allow_unknown_host=False to refuse hosts that are not already trusted.
+    """
     return _run_tool_call(
         lambda: get_ssh_service().download_file(
             host=host,
