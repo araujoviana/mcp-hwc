@@ -100,3 +100,16 @@ To keep context windows small and token costs low, `mcp-hwc` uses a 3-tier struc
 uv run pytest          # Run unit tests (200 tests)
 uv run ruff check .    # Lint and style checks
 ```
+
+## Upgrading to 0.3.0
+
+Behavior changes since 0.2.3:
+
+- **`call_operation` responses are slimmer.** The result keeps `service`, `operation`, `region`
+  and `response`; the remaining metadata is dropped, null/empty values are removed and lists
+  longer than `max_items` (default 20) are cut with a `_truncated` hint. Pass `verbose=true`
+  for the full result or `max_items=0` to disable the list cap.
+- **SSH host keys are pinned on first use.** `ssh_*` tools trust a new host once and store
+  its key in `~/.mcp-hwc/known_hosts` (override with `MCP_HWC_KNOWN_HOSTS`). A changed key is
+  rejected. Pass `allow_unknown_host=false` to refuse hosts you have not already trusted.
+- **`ecs_create_vm` no longer returns the generated password** unless `return_password=true`.
