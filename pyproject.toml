@@ -82,7 +82,7 @@ dependencies = [
     "huaweicloudsdkwaf>=3.1.192",
     "huaweicloudsdkworkspace>=3.1.192",
     "huaweicloudsdkworkspaceapp>=3.1.192",
-    "mcp[cli]>=1.2,<2",
+    "mcp[cli]>=1.2,<3",
     "paramiko>=3.5.1",
     "python-dotenv",
 ]
