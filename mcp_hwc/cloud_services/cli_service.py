@@ -52,8 +52,8 @@ class CliServiceError(RuntimeError):
 ExecutionBackend = str
 
 DEFAULT_TOOL_IMAGES = {
-    "kubectl": "bitnami/kubectl:1.31.0",
-    "helm": "alpine/helm:3.16.4",
+    "kubectl": "alpine/kubectl:1.35.4",
+    "helm": "alpine/helm:3.22.1",
     "psql": "postgres:16-alpine",
 }
 

@@ -43,7 +43,7 @@ def test_execute_container_builds_mount_command(monkeypatch: pytest.MonkeyPatch,
     monkeypatch.setattr("mcp_hwc.cloud_services.cli_service.subprocess.run", fake_run)
 
     result = CliService().execute_container(
-        image="bitnami/kubectl:1.31.0",
+        image="alpine/kubectl:1.35.4",
         entrypoint="kubectl",
         args=["version"],
         mounts=[ContainerMount(source_file, "/tmp/input.txt", read_only=True)],

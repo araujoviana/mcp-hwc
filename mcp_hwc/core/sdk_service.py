@@ -9,6 +9,7 @@ from decimal import Decimal
 from functools import lru_cache
 from importlib import import_module
 from typing import Any, Callable, Literal, Sequence
+from urllib.parse import urlparse
 
 from huaweicloudsdkcore.auth.credentials import BasicCredentials, GlobalCredentials
 from huaweicloudsdkcore.exceptions import exceptions as sdk_exceptions
@@ -17,6 +18,7 @@ from huaweicloudsdkcore.utils.http_utils import sanitize_for_serialization
 
 from mcp_hwc.core.config import CloudApiConfig
 from mcp_hwc.core.errors import build_access_denied_hint, is_access_denied
+from mcp_hwc.core.extended_services import EXTENDED_SERVICE_ROWS
 
 _PRIMITIVE_TYPES = {
     "str",
@@ -118,9 +120,14 @@ class ServiceVersionSpec:
     def endpoint_for_region(self, region: str) -> str:
         region_id = region.strip()
         resolved_region = self._try_region(region_id)
-        endpoint = getattr(resolved_region, "endpoint", None)
-        if isinstance(endpoint, str) and endpoint:
+        endpoint = _first_endpoint(resolved_region)
+        if endpoint:
             return endpoint.rstrip("/")
+        global_endpoint = _infer_global_endpoint(
+            self.region_module, self.region_class_name, region_id
+        )
+        if global_endpoint:
+            return global_endpoint
         return _infer_endpoint_template(
             self.region_module,
             self.region_class_name,
@@ -273,6 +280,14 @@ _VPC_VERSIONS = {
     "v2": _service_version(
         "huaweicloudsdkvpc",
         "v2",
+        "VpcClient",
+        "vpc_region",
+        "VpcRegion",
+    ),
+    # v3 adds security-group rules v3, address groups, and sub-network interfaces.
+    "v3": _service_version(
+        "huaweicloudsdkvpc",
+        "v3",
         "VpcClient",
         "vpc_region",
         "VpcRegion",
@@ -1994,7 +2009,7 @@ SERVICE_SPECS = {
         implementation_name="ucs",
         sdk_package_root="huaweicloudsdkucs",
         env_key="UCS",
-        credential_scope="basic",
+        credential_scope="global",
         default_api_version="v1",
         versions=_UCS_VERSIONS,
         aliases=("ubiquitous_cloud_native_service",),
@@ -2111,7 +2126,7 @@ SERVICE_SPECS = {
         implementation_name="cc",
         sdk_package_root="huaweicloudsdkcc",
         env_key="CC",
-        credential_scope="basic",
+        credential_scope="global",
         default_api_version="v3",
         versions=_CC_VERSIONS,
         aliases=("cloud_connect",),
@@ -2119,6 +2134,31 @@ SERVICE_SPECS = {
         provisioning_notes="Manage cloud connections, bandwidth packages, and inter-region networking attachments.",
     ),
 }
+
+
+def _extended_service_specs() -> dict[str, ServiceSpec]:
+    specs = {}
+    for name, display_name, package, scope, default, aliases, versions in EXTENDED_SERVICE_ROWS:
+        specs[name] = ServiceSpec(
+            name=name,
+            display_name=display_name,
+            implementation_name=name,
+            sdk_package_root=package,
+            env_key=name.upper(),
+            credential_scope=scope,
+            default_api_version=default,
+            versions={
+                api_version: _service_version(
+                    package, api_version, client_class, region_module, region_class
+                )
+                for api_version, client_class, region_module, region_class in versions
+            },
+            aliases=aliases,
+        )
+    return specs
+
+
+SERVICE_SPECS.update(_extended_service_specs())
 
 ClientFactory = Callable[[CloudApiConfig, ResolvedServiceSpec], Any]
 
@@ -2525,7 +2565,16 @@ class HuaweiCloudSdkService:
 
     def _import_model_class(self, module_name: str, class_name: str) -> type[Any]:
         module = import_module(f"{self._spec.model_package}.{module_name}")
-        return getattr(module, class_name)
+        model_class = getattr(module, class_name, None)
+        if model_class is not None:
+            return model_class
+        # snake->Pascal can't recover acronym casing (e.g. SetRdsDBFaultPolicyRequest),
+        # so fall back to a case-insensitive match within the operation's own module.
+        wanted = class_name.lower()
+        for attribute_name, attribute in vars(module).items():
+            if attribute_name.lower() == wanted and isinstance(attribute, type):
+                return attribute
+        raise AttributeError(f"module {module.__name__!r} has no attribute {class_name!r}")
 
 
 def resolve_service_spec(
@@ -2753,19 +2802,61 @@ def _import_attribute(module_name: str, attribute_name: str) -> Any:
 
 
 @lru_cache(maxsize=None)
+def _first_endpoint(region: Region | None) -> str | None:
+    # `Region.endpoint` is deprecated (and warns) since SDK 3.1.27; read `endpoints`.
+    endpoints = getattr(region, "endpoints", None) or ()
+    first = endpoints[0] if endpoints else None
+    return first if isinstance(first, str) and first else None
+
+
+# Public Huawei Cloud domains that serve global (region-free) API hosts. Sovereign
+# clouds (.eu, .cn) are reachable only through the SDK's own static region entries.
+_GLOBAL_ENDPOINT_DOMAINS = (".myhuaweicloud.com", ".huaweicloud.com")
+_REGION_ID_PATTERN = re.compile(r"[a-z]{2}-[a-z]+-\d+")
+
+
+def _infer_global_endpoint(region_module: str, region_class_name: str, region: str) -> str | None:
+    """Return the service's region-free host if the SDK lists one, else None.
+
+    Global services (CDN, Organizations, Cloud Connect, Config/RMS, ...) publish a single
+    host such as ``https://cdn.myhuaweicloud.com`` for every region, so templating the
+    region into it produces a host that does not exist. Outside China, prefer the
+    ``-intl`` variant when the SDK lists one (tms-intl, coc-intl, bss-intl).
+    """
+    region_class = _import_attribute(region_module, region_class_name)
+    hosts = set()
+    for static_region in getattr(region_class, "static_fields", {}).values():
+        endpoint = _first_endpoint(static_region)
+        if not endpoint:
+            continue
+        endpoint = endpoint.rstrip("/")
+        host = urlparse(endpoint).hostname or ""
+        if host.endswith(_GLOBAL_ENDPOINT_DOMAINS) and not _REGION_ID_PATTERN.search(host):
+            hosts.add(endpoint)
+    if not hosts:
+        return None
+    wants_intl = not region.startswith("cn-")
+    return sorted(hosts, key=lambda e: (("-intl" in e) != wants_intl, len(e), e))[0]
+
+
 def _infer_endpoint_template(region_module: str, region_class_name: str) -> str:
     region_class = _import_attribute(region_module, region_class_name)
     static_fields = getattr(region_class, "static_fields", {})
     candidates = []
     for region_id, region in static_fields.items():
-        endpoint = getattr(region, "endpoint", None)
+        endpoint = _first_endpoint(region)
         if not isinstance(endpoint, str) or region_id not in endpoint:
             continue
         score = 0 if ".myhuaweicloud.com" in endpoint else 1
         candidates.append((score, len(region_id), region_id, endpoint.rstrip("/")))
 
     if not candidates:
-        raise ValueError(f"Unable to infer endpoint template from {region_module}")
+        known = ", ".join(sorted(static_fields)) or "none"
+        raise ValueError(
+            f"{region_module.split('.')[0]} publishes no endpoint pattern for other regions; "
+            f"the SDK only lists: {known}. Use one of those regions, or the service may "
+            "not be offered outside them."
+        )
 
     _, _, region_id, endpoint = sorted(candidates)[0]
     return endpoint.replace(region_id, "{region}", 1)

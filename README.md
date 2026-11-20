@@ -97,9 +97,31 @@ To keep context windows small and token costs low, `mcp-hwc` uses a 3-tier struc
 ## Development
 
 ```bash
-uv run pytest          # Run unit tests (200 tests)
+uv run pytest          # Run unit tests (~1,100 tests)
 uv run ruff check .    # Lint and style checks
 ```
+
+## Upgrading to 0.4.0
+
+Changes since 0.3.0:
+
+- **Every Huawei Cloud service SDK is now registered** (194 services, up from 76). New
+  services include `kps`, `eps`, `tms`, `bms`, `deh`, `modelarts`, `pangulargemodels`, `dli`,
+  `dataartsstudio`, `hss`, `csms`, `ccm`, `sts`, `identitycenter`, `rfs`, `eg` and
+  `servicestage`. Reach them through the generic `huaweicloud_*` tools; run
+  `huaweicloud_list_services` for the full list. The new-style OBS SDK is registered as
+  `obs_sdk`, so the `obs_*` workflow tools are unchanged.
+- **Global services resolve the right endpoint in every region.** `cdn`, `organizations`,
+  `cc`, `ga`, `geip`, `aad`, `ucs`, `config`, `tms`, `eps` and similar services now use their
+  single global host (e.g. `https://cdn.myhuaweicloud.com`), preferring the `-intl` host outside
+  China. Before, they failed in regions such as `la-south-2` or `sa-brazil-1`, and `config`
+  pointed at a host that does not exist.
+- **`cc` and `ucs` use global (domain-level) credentials**, as their SDKs require.
+- **VPC `api_version="v3"` is available.** The default stays `v2`.
+- **Operations whose request class uses acronym casing** (e.g. RDS `set_rds_db_fault_policy`)
+  no longer fail with `AttributeError`.
+- **The containerized `kubectl` fallback uses `alpine/kubectl:1.35.4`**, because
+  `bitnami/kubectl:1.31.0` was removed from Docker Hub. Helm moves to `alpine/helm:3.22.1`.
 
 ## Upgrading to 0.3.0
 
